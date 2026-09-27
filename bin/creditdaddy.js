@@ -17,7 +17,7 @@ import { logger } from '../src/logger.js';
 const args = process.argv.slice(2);
 const cmd = args[0] || 'daemon';
 
-const HELP = `CreditDaddy — Qoder / WorkBuddy / ZCode / mirasim 多账号管理 + 每日积分自动领取
+const HELP = `CreditDaddy — Qoder / WorkBuddy / ZCode / mirasim / 妙手 多账号管理 + 每日积分自动领取
 
 用法:
   creditdaddy daemon [--port 47860] [--host 127.0.0.1]   启动守护进程 + Web 面板
@@ -26,10 +26,10 @@ const HELP = `CreditDaddy — Qoder / WorkBuddy / ZCode / mirasim 多账号管�
   creditdaddy list                                       查看账号
   creditdaddy checkin [--cn | --intl]                    立即领取
   creditdaddy remove <id前缀>                             删除账号
-  creditdaddy export [file.json] [--password 口令] [--cn|--intl]
-                                                        导出账号；带口令则加密（与 10router 迁移文件互通）
+  creditdaddy export [file.json] --password 口令 [--cn|--intl]
+                                                        导出账号（口令必填，至少 4 位；与 10router 迁移文件互通）
   creditdaddy import <file.json> [--password 口令]        导入 CreditDaddy / 10router 导出文件
-  creditdaddy scan                                       导入本机 Qoder / WorkBuddy / ZCode / mirasim 客户端已登录的账号
+  creditdaddy scan                                       导入本机 Qoder / WorkBuddy / ZCode / mirasim / 妙手 客户端已登录的账号
   creditdaddy umid [install|remove]                      Qoder 设备身份组件（Linux / fnOS 国际版领取用）
   creditdaddy logs                                       查看领取状态
   creditdaddy help                                       显示本帮助`;
@@ -104,13 +104,21 @@ async function main() {
     }
     case 'export': {
       const { loadAccounts } = await import('../src/store.js');
-      const { exportAccounts } = await import('../src/transfer.js');
-      const out = args[1] && !args[1].startsWith('--') ? args[1] : 'creditdaddy-backup.json';
+      const { exportAccounts, TransferError } = await import('../src/transfer.js');
+      const out = args[1] && !args[1].startsWith('--') ? args[1] : 'creditdaddy-secure-backup.json';
       const password = flag('--password');
+      if (!password) { console.error('导出账号必须设置加密口令：creditdaddy export [file.json] --password 口令（至少 4 位）'); process.exit(1); }
       const provider = args.includes('--cn') ? 'qoder-cn' : args.includes('--intl') ? 'qoder' : undefined;
       const { writeFileSync } = await import('node:fs');
-      writeFileSync(out, JSON.stringify(exportAccounts(await loadAccounts(), { password, provider }), null, 2), { mode: 0o600 });
-      console.log('✓ 已导出到', out, password ? '（已加密，10router 可直接导入）' : '（含明文 token，注意保管；加 --password 可加密）');
+      let blob;
+      try {
+        blob = exportAccounts(await loadAccounts(), { password, provider });
+      } catch (e) {
+        console.error(e instanceof TransferError ? `导出失败：${e.message}` : e.message);
+        process.exit(1);
+      }
+      writeFileSync(out, JSON.stringify(blob, null, 2), { mode: 0o600 });
+      console.log('✓ 已导出加密文件（10router 可直接导入）：', out);
       break;
     }
     case 'import': {
@@ -129,12 +137,15 @@ async function main() {
       const { readWorkbuddySessions } = await import('../src/workbuddyLocal.js');
       const { liveToAccount: zcodeLive } = await import('../src/zcodeLocal.js');
       const { liveToAccount: mirasimLive } = await import('../src/mirasimLocal.js');
+      const { liveToAccount: catpawLive } = await import('../src/catpawLocal.js');
       const { addAccount } = await import('../src/accounts.js');
       const qa = await readQoderAppAccounts();
       const wb = readWorkbuddySessions();
       const zAccount = zcodeLive();
       let miraAccount = null;
       try { miraAccount = await mirasimLive(); } catch {}
+      let cpAccount = null;
+      try { cpAccount = await catpawLive(); } catch {}
       const records = [
         ...qa.accounts.map((c) => ({
           label: c.source,
@@ -145,9 +156,10 @@ async function main() {
         })),
         ...(zAccount ? [{ label: 'ZCode 当前登录', rec: zAccount }] : []),
         ...(miraAccount ? [{ label: 'mirasim 当前登录', rec: miraAccount }] : []),
+        ...(cpAccount ? [{ label: '妙手当前登录', rec: cpAccount }] : []),
       ];
       for (const e of [...qa.errors, ...wb.errors]) console.log('⚠', e.file, e.error);
-      if (!records.length) { console.log('（本机 Qoder / WorkBuddy / ZCode / mirasim 客户端未登录或未安装）'); break; }
+      if (!records.length) { console.log('（本机 Qoder / WorkBuddy / ZCode / mirasim / 妙手 客户端未登录或未安装）'); break; }
       for (const { label, rec } of records) {
         const r = await addAccount(rec, { trusted: true });
         console.log(r.duplicate ? (r.updated ? '↻ 已更新' : '· 已存在') : '✓ 已导入', r.account.name || r.account.id, `（${label}）`);

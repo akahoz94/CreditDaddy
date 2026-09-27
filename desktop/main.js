@@ -18,6 +18,7 @@ let win = null;
 let tray = null;
 let quitting = false;
 let boundPort = PORT;
+let daemonMod = null;
 let hideHintShown = false;
 let lastSummary = '';
 const DEFAULT_HOMEPAGE = 'https://github.com/techysy/CreditDaddy';
@@ -54,6 +55,7 @@ async function boot() {
     const constants = await load('src/constants.js');
     const r = await daemon.startDaemon(PORT, '127.0.0.1');
     boundPort = r.port;
+    daemonMod = daemon;   // 保留模块引用：面板里改/关访问密码后，托盘领取实时读到新值（getPanelKey）
     daemonInfo = { version: constants.APP_VERSION, dataDir: store.dataDir(), homepage: constants.PROJECT_URL || DEFAULT_HOMEPAGE };
     checkin.startScheduler();
   } catch (err) {
@@ -180,6 +182,19 @@ function registerAuthWindowIpc() {
       return { ok: false, error: '未找到 Mirasim 客户端可执行文件' };
     } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
   });
+  // 妙手页「打开客户端」（本机安装于 %LOCALAPPDATA%\妙手\妙手.exe）
+  ipcMain.handle('open-catpaw-client', async () => {
+    try {
+      const os = require('node:os');
+      const fs = require('node:fs');
+      const cand = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), '妙手', '妙手.exe');
+      if (process.platform === 'win32' && fs.existsSync(cand)) {
+        const err = await shell.openPath(cand);
+        if (!err) return { ok: true };
+      }
+      return { ok: false, error: '未找到妙手客户端可执行文件' };
+    } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+  });
 }
 
 function panelUrl() {
@@ -243,9 +258,10 @@ function notify(title, body) {
 async function checkinNow() {
   tray.setToolTip('CreditDaddy - 正在领取…');
   try {
+    const panelKey = daemonMod && typeof daemonMod.getPanelKey === 'function' ? daemonMod.getPanelKey() : '';
     const res = await fetch('http://127.0.0.1:' + boundPort + '/api/checkin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(panelKey ? { 'x-qd-key': panelKey } : {}) },
       body: '{"skipIfCheckedToday":false}',
     });
     const data = await res.json().catch(() => ({}));

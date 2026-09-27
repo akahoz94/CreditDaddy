@@ -43,13 +43,13 @@
   .title { font-family: "Avenir Next", Avenir, "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 17px; font-weight: 750; letter-spacing: -.5px; line-height: 1.15; }
   .ver { color: var(--text-3); font-size: 11px; line-height: 1.3; font-variant-numeric: tabular-nums; }
   .head-right { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 12px; }
-  /* 组件开关：右上角弹出菜单 */
-  .comp-wrap { position: relative; display: inline-flex; }
-  .comp-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 80; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--toast-shadow); padding: 10px 12px; min-width: 132px; display: flex; flex-direction: column; gap: 8px; }
-  .comp-menu[hidden] { display: none; }
-  .comp-menu-title { font-size: 11px; color: var(--text-3); }
+  /* 面板设置（右上角齿轮 → 弹窗）：访问密码 + 组件显隐与排序 + 账号卡片排序 */
+  .comp-menu { display: flex; flex-direction: column; gap: 8px; }
+  .comp-menu-title { font-size: 11px; color: var(--text-3); margin: 10px 0 4px; padding-top: 8px; border-top: 1px dashed var(--border-subtle); }
+  .comp-menu-title:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
   .comp-menu .check { margin-right: 0; font-size: 12.5px; color: var(--text); }
-  #comp-menu { max-height: 72vh; overflow: auto; min-width: 236px; }
+  .sec-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-3); }
+  .sec-status.on { color: var(--ok); border-color: rgba(var(--accent-rgb), .45); }
   .comp-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
   .comp-row.off .check { opacity: .45; }
   .comp-ops { display: inline-flex; gap: 2px; flex: none; }
@@ -112,6 +112,8 @@
   html[data-theme="dark"] .badge.prod.workbuddy { color: #5eead4; }
   .badge.prod.zcode { color: #1d4ed8; background: rgba(37,99,235,.1); }
   html[data-theme="dark"] .badge.prod.zcode { color: #93c5fd; }
+  .badge.prod.catpaw { color: #c2410c; background: rgba(249,115,22,.14); }
+  html[data-theme="dark"] .badge.prod.catpaw { color: #fdba74; }
   .seg-ctl { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--hover); }
   .seg-ctl button { border: none; background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 7px; cursor: pointer; }
   .seg-ctl button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
@@ -215,7 +217,7 @@
   .prod-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .prod-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .dot.qoder { background: #7c3aed; } .dot.workbuddy { background: #14b8a6; } .dot.zcode { background: #2563eb; }
+  .dot.qoder { background: #7c3aed; } .dot.workbuddy { background: #14b8a6; } .dot.zcode { background: #2563eb; } .dot.mirasim { background: #64748b; } .dot.catpaw { background: #f97316; }
   .prod-go { color: var(--text-3); font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; gap: 2px; }
   .prod-go svg { width: 12px; height: 12px; transition: transform .15s; }
   .prodcard:hover .prod-go { color: var(--text); }
@@ -317,10 +319,7 @@
     </div>
     <div class="head-right">
       <span id="sched" class="num"></span>
-      <div class="comp-wrap">
-        <button class="icon-btn" id="btn-comp" title="面板设置：组件显隐与排序、账号卡片排序"></button>
-        <div class="comp-menu" id="comp-menu" hidden></div>
-      </div>
+      <button class="icon-btn" id="btn-comp" title="面板设置：访问密码、组件显隐与排序、账号卡片排序"></button>
       <a class="icon-btn" id="btn-home" href="https://github.com/techysy/CreditDaddy" target="_blank" rel="noopener" title="项目主页（GitHub）"></a>
       <button class="icon-btn" id="btn-theme" title="切换亮色 / 暗色"></button>
     </div>
@@ -332,6 +331,7 @@
     <button data-view="workbuddy">WorkBuddy<span class="cnt" id="cnt-workbuddy">0</span></button>
     <button data-view="zcode">ZCode<span class="cnt" id="cnt-zcode">0</span></button>
     <button data-view="mirasim">mirasim<span class="cnt" id="cnt-mirasim">0</span></button>
+    <button data-view="catpaw">妙手<span class="cnt" id="cnt-catpaw">0</span></button>
     <button data-view="tenrouter">10Router<span class="cnt" id="cnt-tenrouter">–</span></button>
   </nav>
 
@@ -448,13 +448,13 @@
     <div class="modal-title"><span>导出账号</span><button class="close" data-close>✕</button></div>
     <div class="field">
       <label>范围</label>
-      <select class="input" id="ex-provider"><option value="">全部账号</option><option value="p:qoder">Qoder（全部）</option><option value="qoder">仅 Qoder 国际版</option><option value="qoder-cn">仅 Qoder 国内版</option><option value="p:workbuddy">WorkBuddy（全部）</option><option value="workbuddy">仅 WorkBuddy 国内版</option><option value="workbuddy-intl">仅 WorkBuddy 国际版</option><option value="zcode">ZCode</option></select>
+      <select class="input" id="ex-provider"><option value="">全部账号</option><option value="p:qoder">Qoder（全部）</option><option value="qoder">仅 Qoder 国际版</option><option value="qoder-cn">仅 Qoder 国内版</option><option value="p:workbuddy">WorkBuddy（全部）</option><option value="workbuddy">仅 WorkBuddy 国内版</option><option value="workbuddy-intl">仅 WorkBuddy 国际版</option><option value="zcode">ZCode</option><option value="p:mirasim">mirasim</option><option value="p:catpaw">妙手</option></select>
     </div>
     <div class="field">
-      <label>加密口令（可选）</label>
-      <input class="input" id="ex-password" type="password" placeholder="至少 4 位；留空则导出明文">
+      <label>加密口令（必填）</label>
+      <input class="input" id="ex-password" type="password" placeholder="至少 4 位" autocomplete="new-password">
     </div>
-    <div class="hint">设置口令后文件采用 10router 迁移格式加密（scrypt + AES-256-GCM），可直接在 10router 对应提供商页导入（WorkBuddy 对应 10router 的 CodeBuddy）。10router 按提供商导入，建议按单个版本导出。</div>
+    <div class="hint">导出文件一律加密（10router 迁移格式，scrypt + AES-256-GCM），可直接在 10router 对应提供商页导入（WorkBuddy 对应 10router 的 CodeBuddy）。10router 按提供商导入，建议按单个版本导出。<b>口令不会被保存</b>，请牢记——遗失后文件无法解开、无法导入。</div>
     <div class="modal-actions"><button class="btn" data-close>取消</button><button class="btn primary" id="btn-do-export">导出</button></div>
   </div>
 </div>
@@ -466,6 +466,15 @@
     <div class="hint" id="pass-hint">该文件已加密，请输入导出时设置的口令。</div>
     <div class="field" style="margin-top:10px"><input class="input" id="pass-input" type="password"></div>
     <div class="modal-actions"><button class="btn" data-close>取消</button><button class="btn primary" id="btn-pass-ok">导入</button></div>
+  </div>
+</div>
+
+<!-- 面板设置（右上角齿轮） -->
+<div class="mask" id="m-settings">
+  <div class="modal">
+    <div class="modal-title"><span>面板设置</span><button class="close" data-close>✕</button></div>
+    <div class="comp-menu" id="comp-menu"></div>
+    <div class="modal-actions"><button class="btn" data-close>关闭</button></div>
   </div>
 </div>
 
@@ -542,7 +551,7 @@ const I = {
 
 const $ = (id) => document.getElementById(id);
 const state = { accounts: [], quotas: {}, status: null, busy: {}, view: 'dash', region: '', addProduct: '' };
-const VIEWS = ['dash', 'qoder', 'workbuddy', 'zcode', 'mirasim', 'tenrouter'];
+const VIEWS = ['dash', 'qoder', 'workbuddy', 'zcode', 'mirasim', 'catpaw', 'tenrouter'];
 // 10Router 集成：config 来自 /api/tenrouter，quotas 来自 /api/tenrouter/quotas
 const tr = { config: null, quotas: null, error: null, loading: false, syncing: false };
 const PRODUCTS = [
@@ -550,6 +559,7 @@ const PRODUCTS = [
   { id: 'workbuddy', label: 'WorkBuddy' },
   { id: 'zcode', label: 'ZCode' },
   { id: 'mirasim', label: 'mirasim' },
+  { id: 'catpaw', label: '妙手' },
 ];
 const prodLabel = (id) => (PRODUCTS.find((x) => x.id === id) || { label: id }).label;
 
@@ -559,6 +569,7 @@ const COMPONENTS = [
   { id: 'workbuddy', label: 'WorkBuddy' },
   { id: 'zcode', label: 'ZCode' },
   { id: 'mirasim', label: 'mirasim' },
+  { id: 'catpaw', label: '妙手' },
   { id: 'tenrouter', label: '10Router' },
 ];
 const HIDDEN_COMP_KEY = 'qd_hidden_components';
@@ -671,10 +682,13 @@ const PROV = {
   'workbuddy-intl': { prod: 'workbuddy', prodLabel: 'WorkBuddy', region: '国际版', cls: 'intl' },
   zcode: { prod: 'zcode', prodLabel: 'ZCode', region: '', cls: '' },
   mirasim: { prod: 'mirasim', prodLabel: 'mirasim', region: '', cls: '' },
+  catpaw: { prod: 'catpaw', prodLabel: '妙手', region: '', cls: '' },
 };
-// 支持每日签到的产品（ZCode / mirasim 额度靠活动或滚动窗口，不做签到）
+// 支持每日签到的产品（ZCode / mirasim / 妙手 额度靠套餐或滚动窗口发放，不做签到）
 const CHECKIN_PRODUCTS = new Set(['qoder', 'workbuddy']);
-const CLIENT_LABEL = { workbuddy: 'WorkBuddy', zcode: 'ZCode', mirasim: 'mirasim' };
+const CLIENT_LABEL = { workbuddy: 'WorkBuddy', zcode: 'ZCode', mirasim: 'mirasim', catpaw: '妙手' };
+// 额度单位为 Credits/时长而非「积分」口径的产品（不计入剩余积分合计）
+const CREDIT_VIEWS = new Set(['zcode', 'mirasim', 'catpaw']);
 const provOf = (p) => PROV[p] || { prod: 'qoder', prodLabel: p, region: '', cls: '' };
 const provBadges = (p, regionOnly, flavor) => {
   const v = provOf(p);
@@ -720,8 +734,8 @@ function toast(msg, ok) {
 }
 
 // ── API ──
-// 面板访问密码（fnOS / 设置了 CREDITDADDY_PASSWORD 时需要）。内存里的值优先：面板嵌在飞牛桌面窗口里是跨域 iframe，
-// 浏览器拦截第三方存储时 localStorage 不可用，只靠它会每个请求都 401
+// 面板访问密码（在「设置」里开启，或 fnOS / CREDITDADDY_PASSWORD 环境变量注入时需要）。内存里的值优先：
+// 面板嵌在飞牛桌面窗口里是跨域 iframe，浏览器拦截第三方存储时 localStorage 不可用，只靠它会每个请求都 401
 let memKey = null;
 function getKey() {
   if (memKey !== null) return memKey;
@@ -738,7 +752,8 @@ function promptKey(invalid) {
     keyPrompt = uiPrompt('输入面板访问密码', '', {
       type: 'password', okText: '进入',
       message: (invalid ? '密码不正确，请重新输入。\n' : '')
-        + 'fnOS：安装时设置的面板访问密码（忘了可以在 fnOS「应用设置」里重设）。\n命令行部署：环境变量 CREDITDADDY_PASSWORD 的值。',
+        + '面板访问密码在右上角「设置」里管理。\n'
+        + 'fnOS：安装向导设置的密码（忘了可在 fnOS「应用设置」里重设）。\n命令行部署：环境变量 CREDITDADDY_PASSWORD 的值。',
     }).then((k) => { keyPrompt = null; if (k === null || !k.trim()) return false; setKey(k.trim()); return true; });
   }
   return keyPrompt;
@@ -765,6 +780,16 @@ async function api(p, opts = {}, attempt = 0) {
 
 // 10Router 汇总卡「隐藏无额度」偏好（面板本地）
 try { state.trHideEmpty = localStorage.getItem('qd_tr_hideempty') === '1'; } catch (e) {}
+
+// 面板访问密码状态（/api/settings）。boot 后异步拉取，供设置弹窗显示
+state.sec = { enabled: false, loaded: false };
+async function loadSettings() {
+  try {
+    const d = await api('/api/settings');
+    state.sec = { enabled: Boolean(d.panelKeyEnabled), loaded: true };
+    if (!d.panelKeyEnabled) setKey('');   // 关闭后清掉本地缓存的旧密钥
+  } catch (e) { /* 401（密码开启但未输入）等状态由 promptKey 流程处理 */ }
+}
 
 // ── 主题 ──
 function applyTheme(t) {
@@ -870,6 +895,15 @@ function creditHtml(a) {
   if (q.error) return '<div class="credit-line"><span class="dim" title="' + esc(q.error) + '">积分读取失败：' + esc(q.error.slice(0, 40)) + '</span></div><div class="bar"></div>';
   if (q.empty) return '<div class="credit-line"><span class="dim">无有效套餐（仅免费额度）</span></div><div class="bar"></div>';
 
+  // 妙手：Credits 钱包余额 + 当前版本（体验版 / 专业版），无「总量」口径，不画水位条
+  if (a.product === 'catpaw') {
+    const planBadge = q.plan ? '<span class="badge">' + esc(q.plan) + '</span>' : '';
+    const expHtml = q.planExpiresAt ? '<span class="dim">' + fmtTime(q.planExpiresAt).slice(0, 10) + ' 到期</span>'
+      : q.nextRefreshAt ? '<span class="dim">' + fmtTime(q.nextRefreshAt).slice(0, 10) + ' 下次刷新</span>' : '';
+    return '<div class="credit-line"><span class="credit"><span class="lbl">可用额度</span><b>' + fmtNum(q.remaining) + '</b>Credits</span>'
+      + '<span class="credit dim">' + planBadge + (planBadge && expHtml ? ' · ' : '') + expHtml + '</span></div>';
+  }
+
   // 多窗口配额体系（mirasim 等）：每个窗口平等等权，独立一行带分散对齐的名称、数值与三档细水位条
   if (a.product === 'mirasim' && q.parts && q.parts.length) {
     const isExhausted = q.exceeded || (q.remaining <= 0);
@@ -963,23 +997,25 @@ function cardHtml(a) {
 
 const isDone = (a) => Boolean(state.status && state.status.todayDone && state.status.todayDone[a.id] === state.status.today);
 const ofProduct = (prod) => state.accounts.filter((a) => a.product === prod);
-const currentUidOf = (prod) => state.status && (prod === 'workbuddy' ? state.status.workbuddyCurrentUid : prod === 'zcode' ? state.status.zcodeCurrentUid : null);
-// 客户端当前登录判定：WorkBuddy / mirasim 按 uid；ZCode 按 uid 或 email（早期导入的账号可能只存了其中一个）
+const currentUidOf = (prod) => state.status && (prod === 'workbuddy' ? state.status.workbuddyCurrentUid : prod === 'zcode' ? state.status.zcodeCurrentUid : prod === 'catpaw' ? state.status.catpawCurrentUid : null);
+// 客户端当前登录判定：WorkBuddy / mirasim / 妙手 按 uid；ZCode 按 uid 或 email（早期导入的账号可能只存了其中一个）
 function isClientCurrent(a) {
   const s = state.status;
   if (!s) return false;
   if (a.product === 'workbuddy') return Boolean(a.uid && s.workbuddyCurrentUid && s.workbuddyCurrentUid === a.uid);
   if (a.product === 'mirasim') return Boolean(a.uid && s.mirasimCurrentUid && s.mirasimCurrentUid === a.uid);
+  if (a.product === 'catpaw') return Boolean(a.uid && s.catpawCurrentUid && s.catpawCurrentUid === a.uid);
   if (a.product === 'zcode') {
     const id = s.zcodeCurrentIdentity;
     return Boolean(id && ((a.uid && id.uid != null && String(id.uid) === String(a.uid)) || (a.email && id.email && id.email === a.email)));
   }
   return false;
 }
-// 积分合计：只统计「积分」口径（ZCode 是 token 额度，单位不同，不相加）
+// 积分合计：只统计「积分」口径（ZCode / 妙手是 token 额度或 Credits 余额，单位不同，不相加）
 function creditSum(list) {
   let sum = 0, known = 0, loading = 0;
   for (const a of list) {
+    if (CREDIT_VIEWS.has(a.product)) continue;
     const q = state.quotas[a.id];
     if (!q) { loading++; continue; }
     if (q.error) continue;
@@ -1002,6 +1038,7 @@ const EMPTY_TIP = {
   workbuddy: '还没有 WorkBuddy 账号。<br>点「添加账号」可读取本机 WorkBuddy 客户端（当前 + 历史会话），或用浏览器登录 WorkBuddy / CodeBuddy 账号。',
   zcode: '还没有 ZCode 账号。<br>点「添加账号」可读取本机 ZCode 客户端已登录的账号，或用浏览器登录（BigModel / Z.ai），多个账号可一键切换。',
   mirasim: '还没有 mirasim 账号。<br>点「添加账号」可读取本机 mirasim 客户端当前登录的账号（本地解密，token 不出本机）。',
+  catpaw: '还没有妙手账号。<br>点「添加账号」可读取本机妙手（美团 CatPaw）客户端当前登录的账号（本地解密凭据，token 不出本机）。',
 };
 
 function renderProd() {
@@ -1026,11 +1063,11 @@ function renderProd() {
     $('s-done').textContent = acc.filter(isDone).length + ' / ' + acc.length;
   }
   const c = creditSum(acc);
-  $('s-credits-label').textContent = prod === 'zcode' || prod === 'mirasim' ? '有效套餐' : '剩余积分';
-  $('s-credits').textContent = (prod === 'zcode' || prod === 'mirasim')
+  $('s-credits-label').textContent = CREDIT_VIEWS.has(prod) ? '有效套餐' : '剩余积分';
+  $('s-credits').textContent = CREDIT_VIEWS.has(prod)
     ? acc.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && !q.empty; }).length + ' / ' + acc.length
     : c.known ? fmtNum(c.sum) : '-';
-  const hasRegions = prod !== 'zcode' && prod !== 'mirasim';
+  const hasRegions = !CREDIT_VIEWS.has(prod);
   $('region').style.display = hasRegions ? '' : 'none';
   $('region-div').style.display = hasRegions ? '' : 'none';
   document.querySelectorAll('#region button').forEach((x) => x.classList.toggle('active', x.dataset.r === state.region));
@@ -1103,6 +1140,11 @@ function renderDash() {
       const planned = list.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && !q.empty; }).length;
       rows = '<span class="lbl">额度体系</span><span class="val dim">5h / 7d 滚动窗口</span>'
         + '<span class="lbl">有效套餐</span><span class="val">' + planned + ' / ' + list.length + '</span>';
+    } else if (p.id === 'catpaw') {
+      const withPlan = list.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && q.plan; });
+      const credits = withPlan.reduce((s, a) => s + (Number(state.quotas[a.id].remaining) || 0), 0);
+      rows = '<span class="lbl">额度体系</span><span class="val dim">Credits 余额 + 套餐版本</span>'
+        + (withPlan.length ? '<span class="lbl">可用额度</span><span class="val">' + fmtNum(credits) + ' Credits（' + esc(withPlan.map((a) => state.quotas[a.id].plan).join(' / ')) + '）</span>' : '');
     } else {
       const planned = list.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && !q.empty; }).length;
       // ZCode 没有每日签到：不展示签到语义的行
@@ -1118,6 +1160,7 @@ function renderDash() {
       const live = cur ? esc(cur.name || cur.email || cur.uid)
         : zid && (zid.email || zid.uid || zid.username) ? '未导入的账号（' + esc(zid.email || zid.username || zid.uid) + '）'
         : p.id === 'mirasim' && s.mirasimCurrentUid ? '未导入的账号'
+        : p.id === 'catpaw' && s.catpawClient && s.catpawClient.signedIn && !list.some((a) => isClientCurrent(a)) ? '未导入的账号'
         : (p.id === 'workbuddy' && s.workbuddyCurrentUid ? '未导入的账号' : '—');
       rows += '<span class="lbl">客户端当前</span><span class="val">' + live + '</span>';
     }
@@ -1190,8 +1233,13 @@ function renderStatus() {
   // 产品相关提示只在对应标签页出现
   const hasIntl = state.view === 'qoder' && state.region !== 'cn' && state.accounts.some((a) => a.provider === 'qoder');
   const n = $('notice');
-  n.classList.toggle('info', state.view === 'zcode' || state.view === 'mirasim' || (hasIntl && Boolean(s.riskIdentity)));
-  if (state.view === 'mirasim') {
+  n.classList.toggle('info', state.view === 'zcode' || state.view === 'mirasim' || state.view === 'catpaw' || (hasIntl && Boolean(s.riskIdentity)));
+  if (state.view === 'catpaw') {
+    n.style.display = '';
+    n.innerHTML = '妙手（美团 CatPaw）按套餐发放 Credits（体验版 / 专业版…），没有每日签到。凭据由妙手客户端登录管理：读取额度用本机解密出的登录 token 直连桌面网关，token 失效时到妙手客户端重新登录后再「本机导入」即可。'
+      + '多账号切换：写入本机凭据后重启妙手客户端即生效（切换会自动保存当前登录，不丢号）。'
+      + catpawClientChip(s);
+  } else if (state.view === 'mirasim') {
     n.style.display = '';
     n.innerHTML = 'mirasim（原生 AI 编程开发环境）额度按「平台额度」（5h 滚动窗口、7d 全局上限与分模型上限）分配。Token 约 1 小时过期，读取额度时会自动用 refreshToken 静默续期并同步回客户端，无需手动处理。'
       + '切换账号需要至少两个已导入的账号（当前登录 + 目标账号）：先在「添加账号 → 本机导入」把各账号分别导入，切换时当前登录会自动保存、目标账号写入客户端，桌面版切完自动重启 mirasim。'
@@ -1242,6 +1290,15 @@ function mirasimClientChip(s) {
     + (canOpen ? ' <button class="btn" id="btn-miraopen" style="margin-left:4px" title="打开本机 Mirasim 客户端">打开客户端</button>' : '');
 }
 
+// 妙手客户端状态芯片 + 「打开客户端」按钮
+function catpawClientChip(s) {
+  const c = s.catpawClient || {};
+  if (!c.installed) return ' <span class="dim">客户端：未安装（本机导入 / 切换需要 Windows 妙手客户端）</span>';
+  const canOpen = window.creditdaddy && typeof window.creditdaddy.openCatpawClient === 'function';
+  return ' <span class="dim">客户端：' + (c.running ? '运行中' : '未运行') + (c.signedIn ? '' : ' · 未登录') + '</span>'
+    + (canOpen ? ' <button class="btn" id="btn-cpopen" style="margin-left:4px" title="打开本机妙手客户端">打开客户端</button>' : '');
+}
+
 // Qoder 设备身份组件（Linux / fnOS）
 const umidOffer = (s) => Boolean(s && s.umid && s.umid.supported && !s.umid.installed);
 let umidBusy = false;
@@ -1269,6 +1326,14 @@ $('notice').addEventListener('click', async (e) => {
       const r = await window.creditdaddy.openMirasimClient();
       if (r && r.ok) toast('已启动 Mirasim 客户端');
       else toast((r && r.error) || '无法打开 Mirasim 客户端', false);
+    } catch (err) { toast(String(err && err.message || err), false); }
+    return;
+  }
+  if (e.target.closest('#btn-cpopen')) {
+    try {
+      const r = await window.creditdaddy.openCatpawClient();
+      if (r && r.ok) toast('已启动妙手客户端');
+      else toast((r && r.error) || '无法打开妙手客户端', false);
     } catch (err) { toast(String(err && err.message || err), false); }
     return;
   }
@@ -1839,14 +1904,16 @@ async function onCardClick(e) {
       ? '\n需先退出 ZCode；切换后重新打开 ZCode 即为新账号。当前登录会先保存到 CreditDaddy，不会丢号。'
       : a && a.product === 'mirasim'
         ? '\n需先退出 Mirasim；切换后重新打开即为新账号。当前登录会先保存到 CreditDaddy，不会丢号。'
-        : '\n客户端会自动应用新会话；当前登录账号的最新 token 会先保存到 CreditDaddy。';
+        : a && a.product === 'catpaw'
+          ? '\n需先退出妙手；切换后重新打开妙手即为新账号。当前登录会先保存到 CreditDaddy，不会丢号。'
+          : '\n客户端会自动应用新会话；当前登录账号的最新 token 会先保存到 CreditDaddy。';
     if (!(await uiConfirm('把 ' + client + ' 切换到「' + (a && a.name || id) + '」？' + tip, '切换账号', '切换'))) return;
     const doSwitch = (force) => api('/api/accounts/' + encodeURIComponent(id) + '/switch', { json: { force } });
     try {
       let r;
       try { r = await doSwitch(false); }
       catch (err) {
-        if (err.code !== 'ZCODE_RUNNING' && err.code !== 'MIRASIM_RUNNING') throw err;
+        if (err.code !== 'ZCODE_RUNNING' && err.code !== 'MIRASIM_RUNNING' && err.code !== 'CATPAW_RUNNING') throw err;
         if (!(await uiConfirm(err.message + '\n\n仍要强制切换吗？强制切换会先关闭客户端再写入登录，重新打开客户端即为新账号。', client + ' 正在运行', '关闭并强制切换'))) return;
         r = await doSwitch(true);
       }
@@ -1868,6 +1935,14 @@ async function onCardClick(e) {
           try {
             const re = await window.creditdaddy.openMirasimClient();
             if (re && re.ok) toast('已重新启动 Mirasim 客户端');
+          } catch (e) {}
+        }, 800);
+      }
+      if (a && a.product === 'catpaw' && r && !r.alreadyActive && window.creditdaddy && typeof window.creditdaddy.openCatpawClient === 'function') {
+        setTimeout(async () => {
+          try {
+            const re = await window.creditdaddy.openCatpawClient();
+            if (re && re.ok) toast('已重新启动妙手客户端');
           } catch (e) {}
         }, 800);
       }
@@ -2086,10 +2161,11 @@ const LOCAL_HINT = {
   workbuddy: '读取本机 WorkBuddy 客户端的当前会话与历史会话（CodeBuddyExtension 凭据目录），token 不出本机。',
   zcode: '读取本机 ZCode 客户端当前登录的账号（本地解密 ~/.zcode/v2/credentials.json），token 不出本机。',
   mirasim: '读取本机 mirasim 客户端当前登录的账号（本地解密 ~/.mirasim/setting.json），token 不出本机。',
+  catpaw: '读取本机妙手（美团 CatPaw）客户端当前登录的账号（本地解密 %APPDATA%\\catpaw-moon\\catx-credential.json），token 不出本机。',
 };
 function openAdd(product) {
   state.addProduct = product || '';
-  const tabShown = { local: true, device: product !== 'mirasim', token: product !== 'zcode' && product !== 'mirasim' };
+  const tabShown = { local: true, device: product !== 'mirasim' && product !== 'catpaw', token: product !== 'zcode' && product !== 'mirasim' && product !== 'catpaw' };
   document.querySelectorAll('#m-add .tab').forEach((t) => { t.style.display = tabShown[t.dataset.tab] ? '' : 'none'; });
   $('local-hint').textContent = LOCAL_HINT[state.addProduct];
   let first = null;
@@ -2137,9 +2213,9 @@ async function localScan() {
     }
     for (const e of r.errors || []) html += '<div class="hint" style="color:var(--err)">读取失败：' + esc(e.file) + '：' + esc(e.error) + '</div>';
     if (!cands.length) {
-      const where = state.addProduct ? prodLabel(state.addProduct) : 'Qoder / WorkBuddy / ZCode / mirasim';
-      const alt = state.addProduct === 'zcode' || state.addProduct === 'mirasim' ? '' : '，或改用「浏览器登录」「粘贴 Token」';
-      html += '<div class="hint">未发现已登录的 ' + where + ' 账号。请先在客户端登录' + alt + '。<br>已检查：Qoder / Qoder CN 客户端数据目录、WorkBuddy 凭据目录、ZCode 数据目录、mirasim 数据目录'
+      const where = state.addProduct ? prodLabel(state.addProduct) : 'Qoder / WorkBuddy / ZCode / mirasim / 妙手';
+      const alt = state.addProduct === 'zcode' || state.addProduct === 'mirasim' || state.addProduct === 'catpaw' ? '' : '，或改用「浏览器登录」「粘贴 Token」';
+      html += '<div class="hint">未发现已登录的 ' + where + ' 账号。请先在客户端登录' + alt + '。<br>已检查：Qoder / Qoder CN 客户端数据目录、WorkBuddy 凭据目录、ZCode 数据目录、mirasim 数据目录、妙手凭据目录'
         + (r.scannedDirs && r.scannedDirs.length ? '、' + r.scannedDirs.map(esc).join('、') : '') + '</div>';
     }
     box.innerHTML = html;
@@ -2232,20 +2308,21 @@ async function addToken() {
 // 导出
 async function doExport() {
   const password = $('ex-password').value;
-  if (password && password.length < 4) return toast('口令至少 4 位', false);
+  if (!password.trim()) return toast('导出必须设置加密口令', false);
+  if (password.length < 4) return toast('口令至少 4 位', false);
   try {
     const sel = $('ex-provider').value;
     const scope = sel.startsWith('p:') ? { product: sel.slice(2) } : { provider: sel || undefined };
-    const payload = await api('/api/export', { json: Object.assign({ password: password || undefined }, scope) });
+    const payload = await api('/api/export', { json: Object.assign({ password }, scope) });
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'creditdaddy-' + (sel.replace('p:', '') || 'all') + '-' + new Date().toISOString().slice(0, 10) + (password ? '.secure' : '') + '.json';
+    a.download = 'creditdaddy-' + (sel.replace('p:', '') || 'all') + '-' + new Date().toISOString().slice(0, 10) + '.secure.json';
     a.click();
     URL.revokeObjectURL(a.href);
     $('ex-password').value = '';
     closeModal('m-export');
-    toast(password ? '已导出加密文件（可导入 10router）' : '已导出明文文件，内含 token，请妥善保管');
+    toast('已导出加密文件（可在 10router 或本面板导入）');
   } catch (e) { toast(e.message, false); }
 }
 
@@ -2396,7 +2473,54 @@ function applyComponents() {
   renderStatus();
 }
 
-// 右上角面板设置：组件显隐 + 组件顺序（↑↓，仪表盘与标签栏同步）+ 每产品账号排序（默认积分多者靠前，可手动固定）
+// 右上角面板设置：访问密码 + 组件显隐与排序 + 每产品账号排序（默认积分多者靠前，可手动固定）
+function secStatusHtml() {
+  if (!state.sec.loaded) return '<span class="sec-status">…</span>';
+  return state.sec.enabled ? '<span class="sec-status on">已开启</span>' : '<span class="sec-status">未开启</span>';
+}
+function renderSecActions() {
+  if (!state.sec.loaded) return '';
+  return state.sec.enabled
+    ? '<button class="btn" data-sec-action="change">修改密码</button><button class="btn" data-sec-action="disable">关闭</button>'
+    : '<button class="btn primary" data-sec-action="enable">开启面板密码</button>';
+}
+async function applyPanelKey(next) {
+  setKey(next);
+  state.sec = { enabled: Boolean(next), loaded: true };
+}
+async function doSecAction(action) {
+  if (action === 'enable' || action === 'change') {
+    const pw = await uiPrompt(action === 'enable' ? '设置面板访问密码' : '输入新密码', '', {
+      type: 'password', okText: action === 'enable' ? '开启' : '保存',
+      placeholder: '至少 4 位，不能包含空格',
+      message: '设置后每次打开面板都需要输入此密码。导出账号的加密口令是独立设置，始终必填。',
+    });
+    if (!pw) return;
+    const val = String(pw).trim();
+    if (val.length < 4) return toast('面板访问密码至少 4 位', false);
+    if (/\s/.test(val)) return toast('面板访问密码不能包含空格', false);
+    try {
+      const r = await api('/api/settings', { method: 'PUT', json: { panelKey: val } });
+      await applyPanelKey(val);
+      renderCompMenu();
+      toast(r.panelKeyEnabled ? '已设置面板访问密码，下次打开面板需要输入' : '已保存', true);
+    } catch (e) { toast(e.message, false); }
+    return;
+  }
+  if (action === 'disable') {
+    const ok = await uiConfirm(
+      '关闭后打开面板不再需要密码（局域网 / 公网访问将无保护，仅建议本机使用）。账号导出仍必须设置加密口令。\n\n确定关闭面板访问密码吗？',
+      '关闭面板访问密码', '关闭');
+    if (!ok) return;
+    try {
+      const r = await api('/api/settings', { method: 'PUT', json: { disable: true } });
+      await loadSettings();
+      await applyPanelKey(r.panelKeyEnabled ? getKey() : '');
+      renderCompMenu();
+      toast(r.panelKeyEnabled ? '该部署环境（fnOS / 环境变量）强制启用访问密码，无法在面板内关闭' : '已关闭面板访问密码', true);
+    } catch (e) { toast(e.message, false); }
+  }
+}
 function renderCompMenu() {
   const compRows = state.compOrder.map((id) => {
     const c = COMPONENTS.find((x) => x.id === id);
@@ -2425,8 +2549,13 @@ function renderCompMenu() {
       + (manual && manual.length ? '<button class="btn" data-acc-reset="' + p.id + '" style="margin-top:6px;width:100%">恢复默认排序</button>' : '')
       + '</details>';
   }).join('');
-  $('comp-menu').innerHTML = '<div class="comp-menu-title">组件顺序（仪表盘与标签栏同步）</div>' + compRows
-    + '<div class="comp-menu-title" style="margin-top:2px">账号卡片排序</div>'
+  $('comp-menu').innerHTML =
+    '<div class="comp-menu-title">面板访问密码 ' + secStatusHtml() + '</div>'
+    + '<div class="hint">开启后每次打开面板都需要输入密码；密码可随时在此修改或关闭。'
+    + (state.sec.enabled ? '' : '账号导出不受影响（导出口令始终必填）。') + '</div>'
+    + '<div class="row">' + renderSecActions() + '</div>'
+    + '<div class="comp-menu-title">组件顺序（仪表盘与标签栏同步）</div>' + compRows
+    + '<div class="comp-menu-title">账号卡片排序</div>'
     + (sortSections || '<div class="sort-hint">暂无账号</div>');
 }
 
@@ -2442,15 +2571,12 @@ function moveAccountId(prod, aid, dir) {
   state.cardOrder[prod] = arr;
   saveCardOrder();
 }
-$('btn-comp').addEventListener('click', (e) => {
-  e.stopPropagation();
-  const m = $('comp-menu');
-  if (m.hidden) renderCompMenu();
-  m.hidden = !m.hidden;
-});
-document.addEventListener('click', (e) => {
-  const m = $('comp-menu');
-  if (!m.hidden && !e.target.closest('.comp-wrap')) m.hidden = true;
+// 右上角齿轮 → 面板设置弹窗（访问密码 + 组件显隐/排序 + 账号卡片排序）
+$('btn-comp').addEventListener('click', async () => {
+  renderCompMenu();
+  openModal('m-settings');
+  await loadSettings();
+  renderCompMenu();
 });
 $('comp-menu').addEventListener('change', (e) => {
   const c = e.target.dataset && e.target.dataset.comp;
@@ -2461,6 +2587,8 @@ $('comp-menu').addEventListener('change', (e) => {
   renderCompMenu();
 });
 $('comp-menu').addEventListener('click', (e) => {
+  const secBtn = e.target.closest && e.target.closest('[data-sec-action]');
+  if (secBtn) { doSecAction(secBtn.dataset.secAction); return; }
   const move = e.target.closest && e.target.closest('[data-move]');
   if (move) {
     e.stopPropagation();
@@ -2503,7 +2631,12 @@ $('btn-checkin').onclick = () => checkinAll($('btn-checkin'), state.view);
 $('btn-add-dash').onclick = () => openAdd('');
 $('btn-add').onclick = () => openAdd(state.view);
 $('btn-export-dash').onclick = () => { $('ex-provider').value = ''; openModal('m-export'); };
-$('btn-export').onclick = () => { $('ex-provider').value = state.view === 'zcode' ? 'zcode' : 'p:' + state.view; openModal('m-export'); };
+$('btn-export').onclick = () => {
+  const v = state.view;
+  // ZCode 是单一 provider，直接按 provider 选；其余产品页按产品线（p:）；仪表盘 / 10Router 导出全部
+  $('ex-provider').value = v === 'zcode' ? 'zcode' : (v === 'qoder' || v === 'workbuddy' || v === 'mirasim' || v === 'catpaw') ? 'p:' + v : '';
+  openModal('m-export');
+};
 $('btn-do-export').onclick = doExport;
 $('btn-pass-ok').onclick = () => submitImport($('pass-input').value);
 $('pass-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitImport($('pass-input').value); });
@@ -2550,7 +2683,8 @@ $('region').addEventListener('click', (e) => {
   state.region = b.dataset.r;
   render();
   renderStatus();
-});('change', () => {
+});
+$('f-provider').addEventListener('change', () => {
   $('f-token').placeholder = $('f-provider').value.startsWith('workbuddy')
     ? 'WorkBuddy / CodeBuddy 登录 token（eyJ…，可在 CodeBuddyExtension 的 auth/*.info 中找到）'
     : 'dt-… / jt-… 或 PAT（pt-…，自动兑换）';
@@ -2568,6 +2702,7 @@ applyView();
 (function boot() {
   function start() {
     loadStatus().then(loadAccounts).catch((e) => toast(e.message, false));
+    loadSettings().then(renderCompMenu);
     loadZNet();
     loadTrConfig().then(() => loadTrQuotas());
     setInterval(() => loadTrQuotas(), 5 * 60 * 1000);

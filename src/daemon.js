@@ -32,7 +32,9 @@
  *   POST   /api/qoder/umid/install     下载官方 qodercli 并提取设备身份组件
  *   GET    /api/logs                   最近日志
  *   GET    /api/status                 守护进程状态
- *   POST   /api/export                 导出账号 {password?, provider?}（有口令 → 10router 兼容加密文件）
+ *   GET    /api/settings               面板设置（访问密码开关状态，不回显密码）
+ *   PUT    /api/settings               设置/修改/关闭面板访问密码 {panelKey? | disable?}
+ *   POST   /api/export                 导出账号 {password, provider?}（口令必填，10router 兼容加密文件）
  *   POST   /api/import                 导入账号 {data, password?}（CreditDaddy / 10router 导出文件）
  *   GET    /                           Web 面板
  */
@@ -45,13 +47,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger, getLogs } from './logger.js';
 import {
-  loadAccounts, loadState, withAccounts, publicAccount, dataDir,
+  loadAccounts, loadState, withAccounts, publicAccount, dataDir, loadSettings, saveSettings,
 } from './store.js';
 import { addAccount, importAccounts, refreshContext } from './accounts.js';
 import { productImpl } from './providers.js';
 import { readWorkbuddySessions, writeWorkbuddySession, workbuddyAuthDir, currentWorkbuddyUid } from './workbuddyLocal.js';
 import { liveToAccount as zcodeLiveAccount, switchTo as zcodeSwitchTo, currentZcodeUid, currentZcodeIdentity, detectZcode, ensureVirtualDeviceMid, terminateZcode, zcodeRunning } from './zcodeLocal.js';
 import { liveToAccount as mirasimLiveAccount, switchTo as mirasimSwitchTo, currentMirasimUid, detectMirasim, terminateMirasim, mirasimRunning } from './mirasimLocal.js';
+import { liveToAccount as catpawLiveAccount, switchTo as catpawSwitchTo, currentCatpawToken, detectCatpaw, terminateCatpaw } from './catpawLocal.js';
 import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, setAutoClaimEnabled } from './zcodeClient.js';
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
 import { runCheckinTick, getSchedulerInfo, dayKey } from './checkin.js';
@@ -62,11 +65,19 @@ import { startDeviceFlow, pollDeviceFlow, LOGIN_KINDS } from './authDevice.js';
 import { detectInstalls, scanLocalTokens, putCandidate, peekCandidate } from './localDetect.js';
 import { PROVIDER_LABEL, APP_VERSION, PROVIDERS, PROJECT_URL } from './constants.js';
 
-const PRODUCT_IDS = ['qoder', 'workbuddy', 'zcode', 'mirasim'];
+const PRODUCT_IDS = ['qoder', 'workbuddy', 'zcode', 'mirasim', 'catpaw'];
 
-/** 可选访问密钥：设置 CREDITDADDY_PASSWORD 后，所有 /api/* 需要 x-qd-key 头。
- *  fnOS/NAS 部署监听 0.0.0.0 时由 cmd/main 自动生成并注入。 */
-const PANEL_KEY = process.env.CREDITDADDY_PASSWORD || process.env.QODERDADDY_PASSWORD || '';
+/** 面板访问密码：面板「设置」写入的 settings.json.panelKey 优先（可设 / 可关）；
+ *  未设置（或被面板关闭）时回退环境变量 CREDITDADDY_PASSWORD（fnOS / 命令行部署注入），
+ *  保证安装向导密码在 NAS 部署里始终有效。设置后所有 /api/* 需要 x-qd-key 头；密码不回显。 */
+let PANEL_KEY = '';
+
+async function initPanelKey() {
+  let s = {};
+  try { s = await loadSettings(); } catch {}
+  const env = process.env.CREDITDADDY_PASSWORD || process.env.QODERDADDY_PASSWORD || '';
+  PANEL_KEY = typeof s.panelKey === 'string' && s.panelKey ? s.panelKey : env;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PANEL_FILE = path.join(__dirname, 'panel.html');
@@ -155,6 +166,29 @@ export function rejectForeignRequest(headers, bindHost) {
     if (originHost !== host) return '跨站请求被拒绝';
   }
   return null;
+}
+
+/**
+ * PUT /api/settings 的实际处理（鉴权已在入口完成）：
+ *   { panelKey: '新密码' }  设置 / 修改面板访问密码（≥4 位、不含空白）
+ *   { disable: true }       关闭面板访问密码（导出账号的加密口令不受影响，始终必填）
+ * 口令校验规则与导出加密一致（sealTransfer：至少 4 个字符）。
+ */
+async function handleSettingsPut(res, body) {
+  if (body?.disable === true) {
+    await saveSettings({ panelKey: '' });
+    await initPanelKey();   // 环境变量部署（fnOS）下关闭后仍保留安装向导密码
+    logger.warn('DAEMON', PANEL_KEY ? '面板访问密码已在设置里关闭，但部署环境仍注入密码（保持开启）' : '面板访问密码已关闭（导出账号仍需加密口令）');
+    return json(res, 200, { ok: true, panelKeyEnabled: Boolean(PANEL_KEY) });
+  }
+  const next = typeof body?.panelKey === 'string' ? body.panelKey.trim() : '';
+  if (!next) return json(res, 400, { error: '请提供新密码，或提交 disable 关闭' });
+  if (next.length < 4) return json(res, 400, { error: '面板访问密码至少 4 位' });
+  if (/\s/.test(next)) return json(res, 400, { error: '面板访问密码不能包含空格' });
+  await saveSettings({ panelKey: next });
+  await initPanelKey();
+  logger.info('DAEMON', '面板访问密码已更新');
+  return json(res, 200, { ok: true, panelKeyEnabled: Boolean(PANEL_KEY) });
 }
 
 async function handleApi(req, res, url) {
@@ -370,7 +404,30 @@ async function handleApi(req, res, url) {
         return json(res, e.mirasimRunning ? 409 : 400, { error: e.message, code: e.mirasimRunning ? 'MIRASIM_RUNNING' : undefined });
       }
     }
-    if (!target.provider.startsWith('workbuddy')) return json(res, 400, { error: '只有 WorkBuddy / ZCode / mirasim 账号支持切换' });
+    if (target.provider === 'catpaw') {
+      // 防丢号：先把妙手当前登录同步进账号库
+      try {
+        const live = await catpawLiveAccount();
+        if (live && live.token !== target.token) {
+          await addAccount(live, { trusted: true }).catch((e) => logger.warn('DAEMON', '同步妙手当前登录失败：' + e.message));
+        }
+      } catch (e) {}
+      try {
+        let closedClient = false;
+        if (body?.force === true) {
+          const t = terminateCatpaw();
+          closedClient = t.closed === true;
+          if (closedClient) logger.info('DAEMON', '已关闭妙手客户端（强制切换）');
+          else if (t.running) logger.warn('DAEMON', '未能完全结束妙手进程，继续强制切换');
+        }
+        const r = await catpawSwitchTo(target, { force: body?.force === true });
+        logger.info('DAEMON', r.alreadyActive ? `妙手当前已是 ${target.name || target.id}` : `妙手已切换到 ${target.name || target.id}（重新打开客户端生效）`);
+        return json(res, 200, { ok: true, closedClient, ...r });
+      } catch (e) {
+        return json(res, e.catpawRunning ? 409 : 400, { error: e.message, code: e.catpawRunning ? 'CATPAW_RUNNING' : undefined });
+      }
+    }
+    if (!target.provider.startsWith('workbuddy')) return json(res, 400, { error: '只有 WorkBuddy / ZCode / mirasim / 妙手 账号支持切换' });
     // 先把客户端当前会话的最新 token 收回账号库，避免被覆盖后丢失
     const cur = readWorkbuddySessions().accounts.find((a) => a.current);
     if (cur && cur.uid !== target.uid) {
@@ -405,7 +462,7 @@ async function handleApi(req, res, url) {
 
   // ── 本机检测 / 凭据扫描 ──
   if (p === '/api/local/detect' && method === 'GET') {
-    return json(res, 200, { apps: detectQoderApps(), workbuddyDir: workbuddyAuthDir(), zcode: detectZcode(), mirasim: detectMirasim(), legacy: detectInstalls() });
+    return json(res, 200, { apps: detectQoderApps(), workbuddyDir: workbuddyAuthDir(), zcode: detectZcode(), mirasim: detectMirasim(), catpaw: detectCatpaw(), legacy: detectInstalls() });
   }
   if (p === '/api/local/scan' && method === 'POST') {
     const existing = await loadAccounts();
@@ -450,7 +507,12 @@ async function handleApi(req, res, url) {
       const m = await mirasimLiveAccount();
       if (m) addRecord(m, { source: 'mirasim 当前登录', current: true });
     } catch (e) { errors.push({ file: '~/.mirasim/setting.json', error: e.message }); }
-    // 5) 旧版 VS Code 系 Qoder IDE / CLI：明文 token 扫描（归属需用户选择）
+    // 5) 妙手客户端：解密 %APPDATA%\catpaw-moon\catx-credential.json 的当前登录
+    try {
+      const cp = await catpawLiveAccount();
+      if (cp) addRecord(cp, { source: '妙手当前登录', current: true });
+    } catch (e) { errors.push({ file: 'catpaw-moon/catx-credential.json', error: e.message }); }
+    // 6) 旧版 VS Code 系 Qoder IDE / CLI：明文 token 扫描（归属需用户选择）
     const det = detectInstalls();
     const dirs = det.ideDataDirs.filter(d => d.exists).map(d => d.path);
     if (det.cliDir.exists) dirs.push(det.cliDir.path);
@@ -537,6 +599,8 @@ async function handleApi(req, res, url) {
   if (p === '/api/status' && method === 'GET') {
     const accounts = await loadAccounts();
     const state = await loadState();
+    // 妙手凭据文件只存 token：当前登录按 token 对齐账号库，避免每轮状态都打网关查 uid
+    const cpToken = currentCatpawToken();
     return json(res, 200, {
       ok: true,
       app: 'CreditDaddy',
@@ -557,17 +621,30 @@ async function handleApi(req, res, url) {
       zcodeClient: (() => { const d = detectZcode(); return { installed: d.exists, signedIn: d.signedIn, running: zcodeRunning() }; })(),
       mirasimCurrentUid: currentMirasimUid(),
       mirasimClient: (() => { const d = detectMirasim(); return { installed: d.clientInstalled, signedIn: d.signedIn, running: d.running }; })(),
+      catpawCurrentUid: (cpToken && accounts.find((a) => a.provider === 'catpaw' && a.token === cpToken)?.uid) || null,
+      catpawClient: (() => { const d = detectCatpaw(); return { installed: d.clientInstalled, signedIn: d.signedIn, running: d.running }; })(),
       keyRequired: Boolean(PANEL_KEY),
     });
   }
 
-  // 导出
+  // 面板设置：GET 读取（只回状态不回显密码），PUT 设置 / 修改 / 关闭访问密码
+  if (p === '/api/settings' && method === 'GET') {
+    return json(res, 200, { panelKeyEnabled: Boolean(PANEL_KEY) });
+  }
+  if (p === '/api/settings' && method === 'PUT') {
+    const body = await readBody(req).catch(() => ({}));
+    return await handleSettingsPut(res, body);
+  }
+
+  // 导出（加密口令必填——账号含 token，不允许再导出明文文件）
   if (p === '/api/export' && method === 'POST') {
     const body = await readBody(req).catch(() => ({}));
     const provider = PROVIDERS.includes(body?.provider) ? body.provider : undefined;
     const product = PRODUCT_IDS.includes(body?.product) ? body.product : undefined;
+    const password = typeof body?.password === 'string' ? body.password : '';
+    if (password.length < 4) return json(res, 400, { error: '导出必须设置加密口令（至少 4 位）', code: 'PASSWORD_REQUIRED' });
     try {
-      return json(res, 200, exportAccounts(await loadAccounts(), { password: body?.password || undefined, provider, product }));
+      return json(res, 200, exportAccounts(await loadAccounts(), { password, provider, product }));
     } catch (e) {
       if (e instanceof TransferError) return json(res, 400, { error: e.message, code: e.code });
       throw e;
@@ -595,7 +672,11 @@ async function handleApi(req, res, url) {
   return json(res, 404, { error: '未知接口' });
 }
 
-export function startDaemon(port = DEFAULT_PORT, host = '127.0.0.1') {
+/** 当前生效的面板访问密码（同进程宿主——桌面壳——调用本机 API 时带上 x-qd-key 头） */
+export function getPanelKey() { return PANEL_KEY; }
+
+export async function startDaemon(port = DEFAULT_PORT, host = '127.0.0.1') {
+  await initPanelKey();
   let panelHtml = '';
   fs.readFile(PANEL_FILE, 'utf8').then((h) => { panelHtml = h; }).catch(() => {});
 

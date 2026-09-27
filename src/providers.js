@@ -13,6 +13,7 @@ import { checkinOne as checkinQoder, fetchQuotaUsage, fetchUserinfo } from './qo
 import { checkinWorkbuddy, checkinWorkbuddyIntl, fetchWorkbuddyQuota, inspectToken } from './workbuddyClient.js';
 import { fetchZcodeQuota } from './zcodeClient.js';
 import { fetchMirasimQuota, fetchMirasimProfile } from './mirasimClient.js';
+import { fetchCatpawQuota, fetchCatpawProfile } from './catpawClient.js';
 /** 从 userinfo 响应中挑一个可读的显示名 */
 export function displayNameFrom(ui) {
   const pick = [ui?.nickname, ui?.name, ui?.username, ui?.email]
@@ -91,6 +92,16 @@ const PRODUCTS = {
     verify: async (account) => {
       const p = await fetchMirasimProfile(account.token);
       return { name: p.name || p.email, uid: p.id, email: p.email };
+    },
+  },
+  catpaw: {
+    label: '妙手',
+    // 无 checkin：妙手（美团 CatPaw）按套餐发放 Credits，无每日签到活动。
+    // 凭据由妙手客户端登录管理（无对外 refresh）：401 时提示到客户端重新登录后重新本机导入。
+    quota: (account) => fetchCatpawQuota(account),
+    verify: async (account) => {
+      const p = await fetchCatpawProfile(account.token);
+      return { name: p.name, uid: p.userId, email: null };
     },
   },
 };

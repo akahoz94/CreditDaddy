@@ -15,6 +15,7 @@ const { rejectForeignRequest } = await import('../src/daemon.js');
 const { extractTokens } = await import('../src/localDetect.js');
 const { checkinWorkbuddyIntl } = await import('../src/workbuddyClient.js');
 const { APP_VERSION } = await import('../src/constants.js');
+const catpawClient = await import('../src/catpawClient.js');
 
 test('dayKey 以 10:00 (UTC+8) 为签到日界，与本机时区无关', () => {
   assert.match(dayKey(new Date('2026-09-23T10:00:00Z').getTime()), /^\d{4}-\d{2}-\d{2}$/);
@@ -59,9 +60,16 @@ test('PAT 识别', () => {
   assert.equal(store.publicAccount(a).isPat, true);
 });
 
-test('明文导出不含 id，兼容新旧字段', () => {
+test('导出必须口令：无口令 / 短口令都拒绝', () => {
   const a = store.normalizeAccountInput({ provider: 'qoder', token: 'jt-tok', uid: 'u-1', email: 'a@b.c' });
-  const payload = JSON.parse(JSON.stringify(transfer.exportAccounts([a])));
+  assert.throws(() => transfer.exportAccounts([a]), (e) => e.code === 'PASSWORD_REQUIRED');
+  assert.throws(() => transfer.exportAccounts([a], { password: '' }), (e) => e.code === 'PASSWORD_REQUIRED');
+  assert.throws(() => transfer.exportAccounts([a], { password: '123' }), (e) => e.code === 'PASSPHRASE_TOO_SHORT');
+});
+
+test('载荷构建不含 id，兼容新旧字段', () => {
+  const a = store.normalizeAccountInput({ provider: 'qoder', token: 'jt-tok', uid: 'u-1', email: 'a@b.c' });
+  const payload = transfer.buildExportPayload([a]);
   assert.equal(payload.format, 'creditdaddy-accounts');
   assert.equal(payload.provider, 'qoder');
   assert.equal(payload.accounts[0].id, undefined);
@@ -231,6 +239,98 @@ test('mirasim：正确注册到产品线与适配器', async () => {
   const pub = store.publicAccount(acc);
   assert.equal(pub.product, 'mirasim');
   assert.equal(pub.name, '我的mirasim');
+});
+
+test('catpaw：正确注册到产品线与适配器（无签到、可切换）', async () => {
+  const { productImpl } = await import('../src/providers.js');
+  const { productOf, PROVIDERS } = await import('../src/constants.js');
+  assert.ok(PROVIDERS.includes('catpaw'));
+  assert.equal(productOf('catpaw'), 'catpaw');
+  const impl = productImpl('catpaw');
+  assert.equal(impl.label, '妙手');
+  assert.equal(typeof impl.quota, 'function');
+  assert.equal(typeof impl.verify, 'function');
+  assert.equal(impl.checkin, undefined, '妙手按套餐发放 Credits，无每日签到');
+
+  const acc = store.normalizeAccountInput({ provider: 'catpaw', token: 'cp-test-token', uid: '704460616', name: '余师洋_' });
+  assert.equal(acc.provider, 'catpaw');
+  const pub = store.publicAccount(acc);
+  assert.equal(pub.product, 'catpaw');
+  assert.equal(pub.name, '余师洋_');
+  assert.equal(pub.canSwitch, true, '妙手账号凭本机加密文件切换');
+  assert.ok(!pub.tokenMasked.includes('test-token'), '脱敏视图不保留完整 token 中段');
+});
+
+test('catpaw 额度解析：套餐 Credits / 下次刷新 / 空额度与过期套餐', () => {
+  const q = catpawClient.normalizeCatpawBalance({
+    availableCredits: '1195.85',
+    userPlan: { planId: 'plan_free', planName: '体验版', pro: false, status: 'active', autoRenew: false, expireTime: null, nextRefreshTime: 1790784000000 },
+  });
+  assert.deepEqual({ r: q.remaining, u: q.unit, plan: q.plan, n: q.parts.length }, { r: 1195.85, u: 'Credits', plan: '体验版', n: 1 });
+  assert.equal(q.empty, false);
+  assert.equal(q.exceeded, false);
+  assert.equal(q.pro, false);
+  assert.equal(q.autoRenew, false);
+  assert.equal(q.planExpiresAt, null);
+  assert.equal(q.nextRefreshAt, new Date(1790784000000).toISOString());
+  assert.equal(q.parts[0].recurring, true);
+
+  const e = catpawClient.normalizeCatpawBalance({ availableCredits: null, userPlan: { status: 'expired', pro: true } });
+  assert.equal(e.empty, true);
+  assert.equal(e.exceeded, true);
+  assert.equal(e.plan, '专业版', 'planName 缺失时按 pro 兜底');
+});
+
+test('catpaw 网关：信封拆分与 401 → 凭据失效（auth 标记）', async () => {
+  const m = mockFetch([
+    [/\/api\/gateway\/credit\/balance$/, () => ({ body: { code: 0, data: { availableCredits: '10.5', userPlan: { planName: '体验版', status: 'active' } } } })],
+    [/\/api\/gateway\/auth\/current-user$/, () => ({ status: 401, body: {} })],
+  ]);
+  try {
+    const q = await catpawClient.fetchCatpawQuota({ token: 't' });
+    assert.equal(q.remaining, 10.5);
+    assert.equal(q.plan, '体验版');
+    await assert.rejects(catpawClient.fetchCatpawProfile('t'), (err) => err.auth === true && /重新登录/.test(err.message));
+  } finally { m.restore(); }
+});
+
+test('catpaw 凭据文件：AES-256-GCM 加解密互逆 + 切换（测试钩子注入机器 ID）', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'catpaw-cred-'));
+  const file = path.join(dir, 'catx-credential.json');
+  const catpawLocal = await import('../src/catpawLocal.js');
+  process.env.CATPAW_CREDENTIAL_FILE = file;
+  try {
+    catpawLocal._setMachineIdForTests('test-machine-id');
+    catpawLocal._setRunningForTests(false);   // 本机可能真的开着妙手，屏蔽真实进程探测
+    assert.equal(catpawLocal.readCredential(), null, '文件不存在 → null');
+    assert.equal(catpawLocal.currentCatpawToken(), null);
+    catpawLocal._writeCredentialForTests('access-token-A');
+    catpawLocal._writeCredentialForTests('access-token-B');
+    const cred = catpawLocal.readCredential();
+    assert.equal(cred.accessToken, 'access-token-B', '后一次写入覆盖前一次（各自随机 IV）');
+    assert.ok(cred.modifiedAt > 0);
+    assert.equal(catpawLocal.currentCatpawToken(), 'access-token-B');
+    // 密文不是明文 token 的 base64 可逆形式
+    assert.ok(!Buffer.from(JSON.parse(await fs.readFile(file, 'utf8')).ssoTokenEnc, 'base64').includes(Buffer.from('access-token')));
+
+    const r = await catpawLocal.switchTo({ provider: 'catpaw', token: 'access-token-A' });
+    assert.equal(r.switched, true);
+    assert.equal(catpawLocal.readCredential().accessToken, 'access-token-A');
+    const again = await catpawLocal.switchTo({ provider: 'catpaw', token: 'access-token-A' });
+    assert.deepEqual({ s: again.switched, a: again.alreadyActive }, { s: false, a: true });
+    // 客户端运行中：默认拒绝，force 放行
+    catpawLocal._setRunningForTests(true);
+    await assert.rejects(catpawLocal.switchTo({ provider: 'catpaw', token: 'access-token-C' }),
+      (err) => err.catpawRunning === true && /正在运行/.test(err.message));
+    const forced = await catpawLocal.switchTo({ provider: 'catpaw', token: 'access-token-C' }, { force: true });
+    assert.equal(forced.switched, true);
+    catpawLocal._setRunningForTests(null);
+    await fs.rm(file);
+    await assert.rejects(catpawLocal.switchTo({ provider: 'catpaw', token: 'no-file' }), /没有可用的登录凭据/);
+  } finally {
+    catpawLocal._setMachineIdForTests(null);
+    delete process.env.CATPAW_CREDENTIAL_FILE;
+  }
 });
 
 test('Qoder 配额归一化为统一积分结构', () => {

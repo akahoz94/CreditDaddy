@@ -4,6 +4,32 @@
 
 ---
 
+## [Unreleased]
+
+### ✨ 新功能
+
+- **接入美团「妙手」（CatPaw）产品线：额度 / 版本 / 用户信息 + 本机切号**：
+  - **桌面客户端凭据解密**：自动定位 `%APPDATA%\catpaw-moon\catx-credential.json`，其 `ssoTokenEnc` 为 AES-256-GCM 密文（`iv‖tag‖ciphertext` base64），密钥由本机 `HKLM\...\Cryptography\MachineGuid` 派生（`sha256(machineId + ":catpaw-desk-token-v2")`），全程内存计算、不改动客户端存储格式即可读写。
+  - **桌面网关直连**：额度 / 套餐版本 / 用户信息走 `https://catx.nocode.cn/api/gateway/*`（`auth/current-user` + `credit/balance`，token 置于 `X-Auth-Token` 头）——网页端 `credit.catpaw.meituan.com` 的三个接口只认浏览器 Cookie，daemon 不可用，网关路径为纯 token 鉴权，实测可用。
+  - **统一配额结构**：可用 Credits 余额 + 当前套餐（体验版 / 专业版，`planName` 缺失按 `pro` 兜底）+ 套餐到期 / 下次刷新时间；Credits 无总量口径，与 ZCode / mirasim 一样不计入面板「剩余积分」合计。
+  - **本机导入与切换**：`/api/local/detect` 报告妙手安装 / 登录 / 运行状态，`creditdaddy scan` 与面板「添加账号 → 本机导入」抓取当前登录（网关补全 uid / 昵称 / 手机号）；切号 = 重写加密凭据 + 重启妙手客户端（客户端无热加载），运行中默认拒绝并给出 409 `CATPAW_RUNNING`，强制切换自动 taskkill 退出并重新拉起；切换前把当前登录同步进账号库防丢号。
+  - **凭据失效引导**：妙手没有对外 refresh 接口，401 / 「登录失效」统一提示在妙手客户端重新登录后再本机导入；面板妙手页说明「按套餐发放 Credits、无每日签到」。
+  - **全端界面适配**：导航栏 / 仪表盘新增「妙手」产品卡（Credits 余额 + 套餐版本，客户端未导入账号时的当前登录提示），组件开关、导出范围（`p:catpaw`）、`CLIENT_LABEL` 状态芯片、深色模式配色一并接入。
+
+- **面板访问密码搬进右上角「设置」弹窗，可直接开启 / 修改 / 关闭**：
+  - 顶栏齿轮图标由原「面板组件」下拉升级为「面板设置」弹窗：一节 **面板访问密码**（状态徽章 + 开启 / 修改密码 / 关闭按钮），下接原有组件显隐排序与账号卡片排序区。
+  - 密码持久化在数据目录 `settings.json`（新增 `GET/PUT /api/settings`，响应只回 `panelKeyEnabled` 布尔，不回显密码）；开启后所有 `/api/*` 需 `x-qd-key` 头，面板 401 时自动弹框要密码并重试请求。
+  - 环境变量 `CREDITDADDY_PASSWORD`（fnOS 安装向导 / 命令行部署注入）保持兜底优先：`settings.json` 未设或被面板关闭时回退 env，保证 NAS 部署密码始终有效；此类部署下面板内「关闭」会如实提示无法关闭。
+  - 关闭访问密码需二次确认（提示局域网 / 公网暴露风险）；关闭后清掉面板本地缓存密钥。桌面版托盘「立即领取」实时读取当前密码（`getPanelKey()`），面板内改密不中断托盘领取。
+
+### 🔒 安全加固
+
+- **账号导出强制加密，移除全部明文导出路径**：
+  - `transfer.exportAccounts` 不再接受无口令调用（新错误码 `PASSWORD_REQUIRED`），产物一律为 10router 兼容的 `10router-oauth-secure-v1` 信封（scrypt N=16384 + AES-256-GCM，口令至少 4 位）。
+  - 面板导出弹窗口令必填（文件名固定带 `.secure`）；`/api/export` 对缺失 / 过短口令直接 400；CLI `creditdaddy export` 无 `--password` 时拒绝执行并给出用法；导出文件可直接在 10router 或本面板导入。
+
+---
+
 ## [0.9.5] - 2026-09-27
 
 > 本版主题：**全面集成 mirasim 产品线（用量 / 额度 / 账号切换）+ ZCode 双套餐体系与客户端切号闭环 + 全局组件开关 + 杀软误报根治与安全审计**。

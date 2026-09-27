@@ -93,10 +93,15 @@ export function buildExportPayload(accounts, { provider, product } = {}) {
   };
 }
 
-/** 导出：给口令则输出 10router 兼容的加密信封，否则输出明文载荷 */
+/**
+ * 导出：只输出 10router 兼容的加密信封（scrypt + AES-256-GCM）。
+ * 账号含 token，导出必须设置口令——不再提供明文导出路径；口令校验复用 sealTransfer。
+ */
 export function exportAccounts(accounts, { password, provider, product } = {}) {
-  const payload = buildExportPayload(accounts, { provider, product });
-  return password ? sealTransfer(payload, password) : payload;
+  if (typeof password !== 'string' || !password) {
+    throw new TransferError('PASSWORD_REQUIRED', '导出账号必须设置加密口令（至少 4 个字符）');
+  }
+  return sealTransfer(buildExportPayload(accounts, { provider, product }), password);
 }
 
 /**

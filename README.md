@@ -4,7 +4,7 @@
 
 # CreditDaddy
 
-**AI 编程工具多账号本地管理 + 每日积分自动领取（领鸡蛋）助手：Qoder · WorkBuddy · ZCode，集成 10Router 额度总览与用量同步**
+**AI 编程工具多账号本地管理 + 每日积分自动领取（领鸡蛋）助手：Qoder · WorkBuddy · ZCode · mirasim · 妙手，集成 10Router 额度总览与用量同步**
 
 [![Release](https://img.shields.io/github/v/release/techysy/CreditDaddy?label=%E7%89%88%E6%9C%AC&color=2563eb)](https://github.com/techysy/CreditDaddy/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/techysy/CreditDaddy/ci.yml?branch=main&label=CI)](https://github.com/techysy/CreditDaddy/actions/workflows/ci.yml)
@@ -59,9 +59,9 @@
 ## 功能
 
 **多账号管理与切换**
-- **仪表盘 + 分产品标签页**：首页仪表盘汇总账号总数、今日领取进度、剩余总积分、下次自动执行时间、各产品概况、待处理异常账号（token 失效 / 即将过期、领取失败）与最近领取审计；Qoder、WorkBuddy、ZCode 各自独立标签页，卡片式展示，支持国内 / 国际版筛选，直观查看连续天数与额度包到期，自适应亮色 / 暗色主题。右上角「组件开关」可整块收起不使用的产品 / 10Router 标签页与仪表盘卡片（偏好保存在浏览器本地）。
-- **本机导入**：一键安全读取本机已登录的客户端凭据 —— 本地解密 Qoder / Qoder CN 的 `auth.v1.dat`，读取 WorkBuddy 客户端（当前与历史会话），解密 ZCode 凭据。敏感 Token 绝不出机器；同一用户续期时自动覆盖。
-- **客户端一键换号**：一键将桌面客户端切换至指定账号（WorkBuddy 自动热切换；ZCode 退出客户端后写回），切号前自动保存当前在线 Token，各账号拥有独立设备指纹，杜绝风控串号。
+- **仪表盘 + 分产品标签页**：首页仪表盘汇总账号总数、今日领取进度、剩余总积分、下次自动执行时间、各产品概况、待处理异常账号（token 失效 / 即将过期、领取失败）与最近领取审计；Qoder、WorkBuddy、ZCode、mirasim、妙手 各自独立标签页，卡片式展示，支持国内 / 国际版筛选，直观查看连续天数与额度包到期，自适应亮色 / 暗色主题。右上角「组件开关」可整块收起不使用的产品 / 10Router 标签页与仪表盘卡片（偏好保存在浏览器本地）。
+- **本机导入**：一键安全读取本机已登录的客户端凭据 —— 本地解密 Qoder / Qoder CN 的 `auth.v1.dat`，读取 WorkBuddy 客户端（当前与历史会话），解密 ZCode / mirasim / 妙手 客户端凭据。敏感 Token 绝不出机器；同一用户续期时自动覆盖。
+- **客户端一键换号**：一键将桌面客户端切换至指定账号（WorkBuddy 自动热切换；ZCode / mirasim / 妙手 退出客户端后写回并自动重新拉起），切号前自动保存当前在线 Token，各账号拥有独立设备指纹，杜绝风控串号。
 - **内置隐私（无痕）授权**：桌面版提供隔离的一次性会话窗口进行网页登录授权，不污染系统浏览器 Cookie，支持同平台无缝扩增多账号。
 - **全流程浏览器登录**：支持三家产品线在面板内直接完成网页 / 设备码授权并入库 —— Qoder 设备码授权（PKCE + nonce）、WorkBuddy 状态轮询、ZCode CLI 轮询（支持智谱 BigModel 与 Z.ai）。
 
@@ -104,6 +104,12 @@
 - **额度与套餐**：通过 `auth.mirasim.ai/auth/me` 查询当前套餐（Pro/Plus）及到期时间；通过 `relay.mirasim.ai/v1/limits` 查询「平台额度」（5小时滚动窗口、7天全局上限与分模型 Claude 上限）。支持直连与代理优先切换，防止网络区域限制。
 - **客户端切号**：一键切换当前登录账号并写回 `setting.json`（保留工作区与模型配置不变），切号前自动同步当前在线 Token；桌面版切换成功后自动重新拉起 Mirasim 客户端。
 
+### 妙手（美团 CatPaw）
+- **账号来源**：读取 `%APPDATA%\catpaw-moon\catx-credential.json`，其 `ssoTokenEnc` 为 AES-256-GCM 密文（`iv‖tag‖ciphertext`），密钥由本机 `MachineGuid` 派生（`sha256(machineId + ":catpaw-desk-token-v2")`），敏感 Token 绝不出机。
+- **额度与版本**：走桌面网关 `https://catx.nocode.cn/api/gateway/*`（纯 token 鉴权，`X-Auth-Token` 头）——`auth/current-user` 用户信息、`credit/balance` 可用 Credits 与当前套餐版本（体验版 / 专业版，含到期与下次刷新时间）。网页端 `credit.catpaw.meituan.com` 接口只认浏览器 Cookie，daemon 不使用。
+- **无签到、无对外续期**：按套餐发放 Credits，无每日签到活动；凭据由妙手客户端登录轮转，失效（401）时在客户端重新登录后再本机导入即可。
+- **客户端切号**：妙手启动时读凭据恢复登录（无热加载），切换 = 重写加密凭据 + 重启客户端；客户端运行中默认拒绝切换，强制切换自动退出并重新拉起妙手。
+
 ## 快速开始
 
 ### 方式一：桌面安装版 / 便携版（推荐）
@@ -134,7 +140,7 @@ creditdaddy daemon
 **CLI 常用命令**：
 
 ```bash
-creditdaddy scan                    # 扫描导入本机 Qoder / WorkBuddy / ZCode 客户端登录的账号
+creditdaddy scan                    # 扫描导入本机 Qoder / WorkBuddy / ZCode / mirasim / 妙手 客户端登录的账号
 creditdaddy add <token>             # 添加 Qoder 国际版账号
 creditdaddy add <token> --cn        # 添加 Qoder 国内版账号
 creditdaddy add <token> --workbuddy # 添加 WorkBuddy 国内版账号（--intl 为国际版）
@@ -212,11 +218,15 @@ CreditDaddy/
 ├── src/                        # 服务核心实现（纯标准库 ESM）
 │   ├── accounts.js             # 账号存储与生命周期管理
 │   ├── authDevice.js           # 网页 / 设备码授权分发中心
+│   ├── catpawClient.js         # 妙手桌面网关（用户信息 / 额度 / 套餐）请求
+│   ├── catpawLocal.js          # 本机妙手凭据 AES-GCM 解密与切号
 │   ├── checkin.js              # 自动轮询调度器
 │   ├── constants.js            # 服务接口与固定头常量
 │   ├── daemon.js               # 本地 HTTP API 与前端面板静态服务
 │   ├── localDetect.js          # 客户端已安装环境侦测
 │   ├── logger.js               # 内存环形日志缓冲
+│   ├── mirasimClient.js        # mirasim 套餐 / 额度请求
+│   ├── mirasimLocal.js         # 本机 mirasim 凭据解密与切号
 │   ├── panel.html              # Web 管理面板前端
 │   ├── providers.js            # 多产品线适配器注册表
 │   ├── qoderApp.js             # 本机 Qoder 客户端探测与 safeStorage 解密

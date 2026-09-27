@@ -39,6 +39,7 @@ export function dataDir() {
 
 const ACCOUNTS_FILE = () => path.join(dataDir(), 'accounts.json');
 const STATE_FILE = () => path.join(dataDir(), 'state.json');
+const SETTINGS_FILE = () => path.join(dataDir(), 'settings.json');
 
 async function ensureDir() {
   await fs.mkdir(dataDir(), { recursive: true, mode: 0o700 });
@@ -199,12 +200,27 @@ export function publicAccount(a) {
     phone: maskPhone(meta.phone),
     domain: meta.domain || null,
     flavor: a.provider === 'zcode' ? zcodeFlavor(meta) : null,
-    canSwitch: Boolean(meta.session?.account || meta.credentials),
+    canSwitch: Boolean(meta.session?.account || meta.credentials || a.provider === 'catpaw'),
     verified: a.verified ?? null,
     createdAt: a.createdAt,
     lastCheckin: a.lastCheckin,
     lastResult: a.lastResult || null,
   };
+}
+
+// ─── 面板设置（访问密码等；密码只存数据目录 settings.json，永不通过接口回显） ───
+
+export async function loadSettings() {
+  const s = await readJson(SETTINGS_FILE(), {});
+  return s && typeof s === 'object' && !Array.isArray(s) ? s : {};
+}
+
+/** 合并写入设置并返回合并后的完整对象（原子写） */
+export async function saveSettings(patch) {
+  await ensureDir();
+  const next = Object.assign(await loadSettings(), patch);
+  await atomicWrite(SETTINGS_FILE(), JSON.stringify(next, null, 2));
+  return next;
 }
 
 // ─── 运行状态（签到日历） ───
