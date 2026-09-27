@@ -17,7 +17,7 @@ import { logger } from '../src/logger.js';
 const args = process.argv.slice(2);
 const cmd = args[0] || 'daemon';
 
-const HELP = `CreditDaddy — Qoder / WorkBuddy / ZCode 多账号管理 + 每日积分自动领取
+const HELP = `CreditDaddy — Qoder / WorkBuddy / ZCode / mirasim 多账号管理 + 每日积分自动领取
 
 用法:
   creditdaddy daemon [--port 47860] [--host 127.0.0.1]   启动守护进程 + Web 面板
@@ -29,7 +29,7 @@ const HELP = `CreditDaddy — Qoder / WorkBuddy / ZCode 多账号管理 + 每日
   creditdaddy export [file.json] [--password 口令] [--cn|--intl]
                                                         导出账号；带口令则加密（与 10router 迁移文件互通）
   creditdaddy import <file.json> [--password 口令]        导入 CreditDaddy / 10router 导出文件
-  creditdaddy scan                                       导入本机 Qoder / WorkBuddy / ZCode 客户端已登录的账号
+  creditdaddy scan                                       导入本机 Qoder / WorkBuddy / ZCode / mirasim 客户端已登录的账号
   creditdaddy umid [install|remove]                      Qoder 设备身份组件（Linux / fnOS 国际版领取用）
   creditdaddy logs                                       查看领取状态
   creditdaddy help                                       显示本帮助`;
@@ -128,10 +128,13 @@ async function main() {
       const { readQoderAppAccounts } = await import('../src/qoderApp.js');
       const { readWorkbuddySessions } = await import('../src/workbuddyLocal.js');
       const { liveToAccount: zcodeLive } = await import('../src/zcodeLocal.js');
+      const { liveToAccount: mirasimLive } = await import('../src/mirasimLocal.js');
       const { addAccount } = await import('../src/accounts.js');
       const qa = await readQoderAppAccounts();
       const wb = readWorkbuddySessions();
       const zAccount = zcodeLive();
+      let miraAccount = null;
+      try { miraAccount = await mirasimLive(); } catch {}
       const records = [
         ...qa.accounts.map((c) => ({
           label: c.source,
@@ -141,9 +144,10 @@ async function main() {
           label: source, rec: { ...rec, source: current ? 'workbuddy-current' : 'workbuddy-history' },
         })),
         ...(zAccount ? [{ label: 'ZCode 当前登录', rec: zAccount }] : []),
+        ...(miraAccount ? [{ label: 'mirasim 当前登录', rec: miraAccount }] : []),
       ];
       for (const e of [...qa.errors, ...wb.errors]) console.log('⚠', e.file, e.error);
-      if (!records.length) { console.log('（本机 Qoder / WorkBuddy / ZCode 客户端未登录或未安装）'); break; }
+      if (!records.length) { console.log('（本机 Qoder / WorkBuddy / ZCode / mirasim 客户端未登录或未安装）'); break; }
       for (const { label, rec } of records) {
         const r = await addAccount(rec, { trusted: true });
         console.log(r.duplicate ? (r.updated ? '↻ 已更新' : '· 已存在') : '✓ 已导入', r.account.name || r.account.id, `（${label}）`);

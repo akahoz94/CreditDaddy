@@ -138,8 +138,8 @@ export function putCandidate(c) {
   return id;
 }
 
-/** 按 candidateId 取回完整候选（导入用），过期返回 null */
-export function takeCandidate(id) {
+/** 按 candidateId 读取候选（不会消费掉，导入前可反复查询）；过期返回 null */
+export function peekCandidate(id) {
   const c = candidates.get(id);
   if (!c) return null;
   if (c.at < Date.now() - CAND_TTL_MS) { candidates.delete(id); return null; }

@@ -80,13 +80,15 @@ function zcodeCaptchaVerify(cfg) {
     const pass = (param) => { clearTimeout(timer); if (!settled) { cleanup(); resolve({ captchaParam: param, region: cfg.region || '' }); } };
     const timer = setTimeout(() => fail('等待验证码超时'), 120000);
 
+    // JSON 内嵌 <script> 时把 < 转义成 \u003c，防止配置值（服务端下发）里出现 </script> 闭合标签注入
+    const jsonSafe = (o) => JSON.stringify(o).replace(/</g, '\\u003c');
     const html = `<!doctype html><meta charset="utf-8"><title>验证码</title><body style="margin:0;background:#fff">
-<script>window.AliyunCaptchaConfig=${JSON.stringify({ region: cfg.region || '', prefix: cfg.prefix || '' })};</script>
+<script>window.AliyunCaptchaConfig=${jsonSafe({ region: cfg.region || '', prefix: cfg.prefix || '' })};</script>
 <script src="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"><\/script>
 <div id="c"></div><button id="b" hidden>打开验证码</button>
 <script>
 window.initAliyunCaptcha({
-  SceneId:${JSON.stringify(cfg.sceneId)},mode:'popup',language:'zh-CN',showErrorTip:false,
+  SceneId:${jsonSafe(cfg.sceneId)},mode:'popup',language:'zh-CN',showErrorTip:false,
   element:'#c',button:'#b',
   getInstance:(i)=>{
     if(i&&typeof i.startTracelessVerification==='function'){i.startTracelessVerification();setTimeout(()=>console.log('ZCAP:INTERACTIVE'),8000);}
@@ -165,6 +167,19 @@ function registerAuthWindowIpc() {
       return { ok: true };
     } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
   });
+  // mirasim 页「打开客户端」
+  ipcMain.handle('open-mirasim-client', async () => {
+    try {
+      const os = require('node:os');
+      const fs = require('node:fs');
+      const cand = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', '@mirasimdesktop', 'Mirasim.exe');
+      if (process.platform === 'win32' && fs.existsSync(cand)) {
+        const err = await shell.openPath(cand);
+        if (!err) return { ok: true };
+      }
+      return { ok: false, error: '未找到 Mirasim 客户端可执行文件' };
+    } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+  });
 }
 
 function panelUrl() {
@@ -193,7 +208,11 @@ function createWindow() {
     },
   });
   win.loadURL(panelUrl());
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  // 只把 https 外链交给系统浏览器打开，其他 scheme 一律不放行
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
   win.on('close', (e) => {
     if (quitting) return;
     e.preventDefault();
@@ -229,7 +248,8 @@ async function checkinNow() {
       headers: { 'Content-Type': 'application/json' },
       body: '{"skipIfCheckedToday":false}',
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status);
     lastSummary = data.summary || '领取完成';
     notify('CreditDaddy 领取完成', lastSummary);
   } catch (e) {

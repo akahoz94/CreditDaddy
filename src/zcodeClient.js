@@ -21,7 +21,7 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import tls from 'node:tls';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { FETCH_TIMEOUT_MS } from './constants.js';
 import { defaultSecret, safeDecrypt } from './zcrypto.js';
 
@@ -35,28 +35,48 @@ const CLIENT_CONFIGS_URL = 'https://zcode.z.ai/api/v1/client/configs';
 // 所以优先上报本机已安装 ZCode 的版本（注册表读取），没有客户端时退回兜底值。
 const APP_VERSION_FALLBACK = '3.11.2';
 let appVersionCache = null;
-export function zcodeAppVersion() {
-  if (appVersionCache) return appVersionCache;
-  let v = null;
-  if (process.platform === 'win32') {
-    for (const hive of [
-      'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
-      'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
-      'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
-    ]) {
-      try {
-        const out = execFileSync('reg', ['query', hive, '/s'], { encoding: 'utf8', windowsHide: true, timeout: 8000 });
-        const m = out.match(/ZCode[^\r\n]*\r?\n(?:.*\r?\n)*?\s*DisplayVersion\s+REG_SZ\s+([\d.]+)/)
-          || out.match(/DisplayName\s+REG_SZ\s+ZCode[^\r\n]*[\s\S]{0,400}?DisplayVersion\s+REG_SZ\s+([\d.]+)/);
-        if (m) { v = m[1]; break; }
-      } catch { /* 继续下一个 hive */ }
-    }
+let appVersionPromise = null;
+
+/** 读注册表拿本机已安装 ZCode 的版本（单 hive，失败返回空串） */
+function queryUninstallHive(hive) {
+  return new Promise((resolve) => {
+    execFile('reg', ['query', hive, '/s'], { encoding: 'utf8', windowsHide: true, timeout: 8000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? '' : String(stdout)));
+  });
+}
+
+async function detectAppVersion() {
+  if (process.platform !== 'win32') return null;
+  for (const hive of [
+    'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+  ]) {
+    const out = await queryUninstallHive(hive);
+    const m = out.match(/ZCode[^\r\n]*\r?\n(?:.*\r?\n)*?\s*DisplayVersion\s+REG_SZ\s+([\d.]+)/)
+      || out.match(/DisplayName\s+REG_SZ\s+ZCode[^\r\n]*[\s\S]{0,400}?DisplayVersion\s+REG_SZ\s+([\d.]+)/);
+    if (m) return m[1];
   }
-  appVersionCache = v || APP_VERSION_FALLBACK;
-  return appVersionCache;
+  return null;
+}
+
+/** 客户端版本号（异步：注册表枚举较慢，不能在请求处理里同步执行阻塞事件循环） */
+export function zcodeAppVersion() {
+  if (appVersionCache) return Promise.resolve(appVersionCache);
+  if (!appVersionPromise) {
+    appVersionPromise = detectAppVersion()
+      .catch(() => null)
+      .then((v) => { appVersionCache = v || APP_VERSION_FALLBACK; return appVersionCache; });
+  }
+  return appVersionPromise;
+}
+
+/** 启动时预热版本探测（调度器调用），首个真实请求前缓存即可就绪 */
+export function warmZcodeAppVersion() {
+  zcodeAppVersion().catch(() => {});
 }
 /** 测试用：重置版本探测缓存 */
-export function _resetAppVersionCache(v) { appVersionCache = v || null; }
+export function _resetAppVersionCache(v) { appVersionCache = v || null; appVersionPromise = null; }
 
 // ── HTTP 出口：直连优先 / 代理优先（可切换），任一路成功即返回 ──
 // 代理地址：优先用面板里保存的 proxyUrl（zcode-net.json，0600），没有则退回 HTTPS_PROXY 环境变量
@@ -196,12 +216,6 @@ export async function fetchJsonRace(url, { method = 'GET', headers = {}, body = 
   throw lastErr || new Error('fetch failed');
 }
 
-async function getJsonRace(url, headers) {
-  const res = await fetchJsonRace(url, { headers });
-  const text = await res.text();
-  try { return JSON.parse(text); } catch { return { code: res.status, msg: text.slice(0, 120) }; }
-}
-
 /** 领取失败码 → 中文提示（取自 zcode-switch i18n.rs） */
 const CLAIM_FAIL = {
   1001: '套餐不存在',
@@ -216,8 +230,8 @@ const CLAIM_FAIL = {
 
 const platform = () => `${process.platform}-${process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : process.arch}`;
 
-function zaiHeaders(token, deviceMid) {
-  const ver = zcodeAppVersion();
+async function zaiHeaders(token, deviceMid) {
+  const ver = await zcodeAppVersion();
   return {
     'User-Agent': `ZCode/${ver}`,
     'HTTP-Referer': 'https://zcode.z.ai',
@@ -234,8 +248,8 @@ function zaiHeaders(token, deviceMid) {
   };
 }
 
-function bigmodelHeaders(token) {
-  return { Authorization: `Bearer ${token}`, 'User-Agent': `ZCode/${zcodeAppVersion()}`, 'x-request-id': crypto.randomUUID() };
+async function bigmodelHeaders(token) {
+  return { Authorization: `Bearer ${token}`, 'User-Agent': `ZCode/${await zcodeAppVersion()}`, 'x-request-id': crypto.randomUUID() };
 }
 
 async function getJson(url, headers) {
@@ -427,9 +441,9 @@ export async function fetchZcodeQuota(account) {
   let authFails = 0;
   for (const t of tokens) {
     try {
-      const limit = await getJson(QUOTA_LIMIT_URL, bigmodelHeaders(t));
+      const limit = await getJson(QUOTA_LIMIT_URL, await bigmodelHeaders(t));
       if (businessOk(limit)) {
-        const sub = await getJson(SUBSCRIPTION_URL, bigmodelHeaders(t)).catch(() => null);
+        const sub = await getJson(SUBSCRIPTION_URL, await bigmodelHeaders(t)).catch(() => null);
         return { ...normalizeQuotaLimit(limit, sub), source: 'bigmodel' };
       }
       if (limit?.code === 401) authFails++;
@@ -438,7 +452,7 @@ export async function fetchZcodeQuota(account) {
   }
   for (const t of billingTokens(account)) {
     try {
-      const bal = await getJson(`${BILLING_BALANCE_URL}?app_version=${zcodeAppVersion()}`, zaiHeaders(t, account.meta?.deviceMid));
+      const bal = await getJson(`${BILLING_BALANCE_URL}?app_version=${await zcodeAppVersion()}`, await zaiHeaders(t, account.meta?.deviceMid));
       if (businessOk(bal)) return { ...normalizeBalance(bal), source: 'zcode.z.ai' };
       if (bal?.code === 401) authFails++;
     } catch (e) { lastErr = e.message; }
@@ -457,8 +471,8 @@ export async function fetchZcodeQuota(account) {
 export async function fetchClaimPlans(account) {
   const token = claimToken(account);
   const v = await getJson(
-    `${BILLING_PREVIEW_URL}?app_version=${zcodeAppVersion()}&platform=${platform()}`,
-    zaiHeaders(token, account.meta?.deviceMid),
+    `${BILLING_PREVIEW_URL}?app_version=${await zcodeAppVersion()}&platform=${platform()}`,
+    await zaiHeaders(token, account.meta?.deviceMid),
   );
   if (v?.code !== 0) throw new Error(v?.msg || v?.message || `查询活动列表失败（code ${v?.code}）`);
   return { plans: normalizePlans(v), serverTime: v?.data?.server_time ? new Date(v.data.server_time * 1000).toISOString() : null };
@@ -466,7 +480,7 @@ export async function fetchClaimPlans(account) {
 
 /** 验证码配置（无需登录）。当前服务端未下发时返回 { enabled: false }。 */
 export async function fetchCaptchaConfig() {
-  const v = await getJson(CLIENT_CONFIGS_URL, zaiHeaders(''));
+  const v = await getJson(CLIENT_CONFIGS_URL, await zaiHeaders(''));
   if (v?.code !== 0) throw new Error('获取验证码配置失败');
   const c = v?.data?.configs?.captcha || {};
   return {
@@ -483,7 +497,7 @@ export async function fetchCaptchaConfig() {
  */
 export async function claimPlan(account, planId, { captchaParam = '', region = '' } = {}) {
   const token = claimToken(account);
-  const headers = zaiHeaders(token, account.meta?.deviceMid);
+  const headers = await zaiHeaders(token, account.meta?.deviceMid);
   if (captchaParam && captchaParam.trim()) headers['X-Aliyun-Captcha-Verify-Param'] = captchaParam.trim();
   if (region && region.trim()) headers['X-Aliyun-Captcha-Verify-Region'] = region.trim();
   const res = await fetchJsonRace(BILLING_CLAIM_URL, {

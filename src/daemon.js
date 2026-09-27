@@ -39,6 +39,7 @@
 
 import http from 'node:http';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +51,7 @@ import { addAccount, importAccounts, refreshContext } from './accounts.js';
 import { productImpl } from './providers.js';
 import { readWorkbuddySessions, writeWorkbuddySession, workbuddyAuthDir, currentWorkbuddyUid } from './workbuddyLocal.js';
 import { liveToAccount as zcodeLiveAccount, switchTo as zcodeSwitchTo, currentZcodeUid, currentZcodeIdentity, detectZcode, ensureVirtualDeviceMid, terminateZcode, zcodeRunning } from './zcodeLocal.js';
+import { liveToAccount as mirasimLiveAccount, switchTo as mirasimSwitchTo, currentMirasimUid, detectMirasim, terminateMirasim, mirasimRunning } from './mirasimLocal.js';
 import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, setAutoClaimEnabled } from './zcodeClient.js';
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
 import { runCheckinTick, getSchedulerInfo, dayKey } from './checkin.js';
@@ -57,12 +59,12 @@ import { detectQoderApps, readQoderAppAccounts, riskIdentityAvailable, riskIdent
 import { umidInfo, installUmid } from './qoderUmid.js';
 import * as tenrouter from './tenrouter.js';
 import { startDeviceFlow, pollDeviceFlow, LOGIN_KINDS } from './authDevice.js';
-import { detectInstalls, scanLocalTokens, putCandidate, takeCandidate } from './localDetect.js';
+import { detectInstalls, scanLocalTokens, putCandidate, peekCandidate } from './localDetect.js';
 import { PROVIDER_LABEL, APP_VERSION, PROVIDERS, PROJECT_URL } from './constants.js';
 
-const PRODUCT_IDS = ['qoder', 'workbuddy', 'zcode'];
+const PRODUCT_IDS = ['qoder', 'workbuddy', 'zcode', 'mirasim'];
 
-/** 可选访问密钥：设置 CREDITDADDY_PASSWORD 后，所有 /api/* 需要 x-qd-key 头（或 ?key=）。
+/** 可选访问密钥：设置 CREDITDADDY_PASSWORD 后，所有 /api/* 需要 x-qd-key 头。
  *  fnOS/NAS 部署监听 0.0.0.0 时由 cmd/main 自动生成并注入。 */
 const PANEL_KEY = process.env.CREDITDADDY_PASSWORD || process.env.QODERDADDY_PASSWORD || '';
 
@@ -105,15 +107,45 @@ function hostnameOf(hostHeader) {
   try { return new URL(`http://${hostHeader}`).hostname; } catch { return ''; }
 }
 
+/** 本机自身的地址 / 主机名（60s 缓存）：非回环监听时用于放行合法 Host，挡 DNS 重绑定 */
+let localHostCache = { at: 0, set: null };
+function localHosts() {
+  const now = Date.now();
+  if (!localHostCache.set || now - localHostCache.at > 60_000) {
+    const s = new Set(LOOPBACK_HOSTS);
+    try { s.add(os.hostname().toLowerCase()); } catch {}
+    try {
+      for (const list of Object.values(os.networkInterfaces())) {
+        for (const it of list || []) {
+          if (!it?.address) continue;
+          const a = it.address.toLowerCase();
+          s.add(a);
+          if (a.includes(':')) s.add(`[${a}]`);
+        }
+      }
+    } catch {}
+    localHostCache = { at: now, set: s };
+  }
+  return localHostCache.set;
+}
+
 /**
  * 浏览器侧防护，返回拒绝原因（null = 放行）：
- *   - 监听回环地址时，Host 必须是 127.0.0.1 / localhost / ::1（挡住 DNS 重绑定读取 token）
+ *   - Host 头必须是本机地址（挡住 DNS 重绑定读取 token）：
+ *     · 回环监听：只允许 127.0.0.1 / localhost / ::1
+ *     · 非回环监听（0.0.0.0 / 局域网 IP）：未设访问密钥时，允许本机全部网卡地址与主机名；
+ *       设了密钥时密钥本身就是门槛（重绑定攻击者拿不到密钥），不再校验 Host
  *   - 带 Origin 的请求必须与 Host 同源（挡住任意网页跨站 POST 添加/导入账号、触发签到）
  * 非浏览器客户端（curl、CLI、托盘菜单）不带 Origin，不受影响。
  */
 export function rejectForeignRequest(headers, bindHost) {
   const host = headers.host || '';
-  if (LOOPBACK_HOSTS.has(bindHost) && !LOOPBACK_HOSTS.has(hostnameOf(host))) {
+  const hostName = hostnameOf(host).toLowerCase();
+  const loopbackBind = LOOPBACK_HOSTS.has(bindHost);
+  if (loopbackBind && !LOOPBACK_HOSTS.has(hostName)) {
+    return 'Host 不被允许';
+  }
+  if (!loopbackBind && !PANEL_KEY && !localHosts().has(hostName)) {
     return 'Host 不被允许';
   }
   const origin = headers.origin;
@@ -127,9 +159,10 @@ export function rejectForeignRequest(headers, bindHost) {
 
 async function handleApi(req, res, url) {
   if (PANEL_KEY) {
-    const key = req.headers['x-qd-key'] || url.searchParams.get('key') || '';
+    // 只认 x-qd-key 头：query 传密会落入 fnOS / 反代的访问日志
+    const key = req.headers['x-qd-key'] || '';
     if (!keyMatches(key)) {
-      return json(res, 401, { error: '需要访问密钥（x-qd-key 头或 ?key= 参数）', code: 'PANEL_KEY' });
+      return json(res, 401, { error: '需要访问密钥（x-qd-key 头）', code: 'PANEL_KEY' });
     }
   }
   const p = url.pathname;
@@ -315,7 +348,29 @@ async function handleApi(req, res, url) {
         return json(res, e.zcodeRunning ? 409 : 400, { error: e.message, code: e.zcodeRunning ? 'ZCODE_RUNNING' : undefined });
       }
     }
-    if (!target.provider.startsWith('workbuddy')) return json(res, 400, { error: '只有 WorkBuddy / ZCode 账号支持切换' });
+    if (target.provider === 'mirasim') {
+      // 防丢号：先把当前登录同步进账号库
+      try {
+        const live = await mirasimLiveAccount();
+        if (live && live.uid !== target.uid) {
+          await addAccount(live, { trusted: true }).catch((e) => logger.warn('DAEMON', '同步 mirasim 当前登录失败：' + e.message));
+        }
+      } catch (e) {}
+      try {
+        let closedClient = false;
+        if (body?.force === true) {
+          const t = terminateMirasim();
+          closedClient = t.closed === true;
+          if (closedClient) logger.info('DAEMON', '已关闭 Mirasim 客户端（强制切换）');
+        }
+        const r = await mirasimSwitchTo(target, { force: body?.force === true });
+        logger.info('DAEMON', r.alreadyActive ? `mirasim 当前已是 ${target.name || target.id}` : `mirasim 已切换到 ${target.name || target.id}`);
+        return json(res, 200, { ok: true, closedClient, ...r });
+      } catch (e) {
+        return json(res, e.mirasimRunning ? 409 : 400, { error: e.message, code: e.mirasimRunning ? 'MIRASIM_RUNNING' : undefined });
+      }
+    }
+    if (!target.provider.startsWith('workbuddy')) return json(res, 400, { error: '只有 WorkBuddy / ZCode / mirasim 账号支持切换' });
     // 先把客户端当前会话的最新 token 收回账号库，避免被覆盖后丢失
     const cur = readWorkbuddySessions().accounts.find((a) => a.current);
     if (cur && cur.uid !== target.uid) {
@@ -350,7 +405,7 @@ async function handleApi(req, res, url) {
 
   // ── 本机检测 / 凭据扫描 ──
   if (p === '/api/local/detect' && method === 'GET') {
-    return json(res, 200, { apps: detectQoderApps(), workbuddyDir: workbuddyAuthDir(), zcode: detectZcode(), legacy: detectInstalls() });
+    return json(res, 200, { apps: detectQoderApps(), workbuddyDir: workbuddyAuthDir(), zcode: detectZcode(), mirasim: detectMirasim(), legacy: detectInstalls() });
   }
   if (p === '/api/local/scan' && method === 'POST') {
     const existing = await loadAccounts();
@@ -390,19 +445,24 @@ async function handleApi(req, res, url) {
       const z = zcodeLiveAccount();
       if (z) addRecord(z, { source: 'ZCode 当前登录', current: true });
     } catch (e) { errors.push({ file: '~/.zcode/v2/credentials.json', error: e.message }); }
-    // 4) 旧版 VS Code 系 Qoder IDE / CLI：明文 token 扫描（归属需用户选择）
+    // 4) mirasim 客户端：解密 ~/.mirasim/setting.json 的当前登录
+    try {
+      const m = await mirasimLiveAccount();
+      if (m) addRecord(m, { source: 'mirasim 当前登录', current: true });
+    } catch (e) { errors.push({ file: '~/.mirasim/setting.json', error: e.message }); }
+    // 5) 旧版 VS Code 系 Qoder IDE / CLI：明文 token 扫描（归属需用户选择）
     const det = detectInstalls();
     const dirs = det.ideDataDirs.filter(d => d.exists).map(d => d.path);
     if (det.cliDir.exists) dirs.push(det.cliDir.path);
     const legacy = await scanLocalTokens(dirs);
     for (const c of legacy.candidates) {
-      candidates.push({ ...c, provider: null, source: '旧版 Qoder IDE / CLI 文件', imported: known(null, takeCandidate(c.id)?.token) });
+      candidates.push({ ...c, provider: null, source: '旧版 Qoder IDE / CLI 文件', imported: known(null, peekCandidate(c.id)?.token) });
     }
     return json(res, 200, { candidates, errors, scanned: legacy.scanned, scannedDirs: [...dirs, wb.dir] });
   }
   if (p === '/api/local/import' && method === 'POST') {
     const body = await readBody(req);
-    const cand = takeCandidate(String(body?.candidateId || ''));
+    const cand = peekCandidate(String(body?.candidateId || ''));
     if (!cand) return json(res, 404, { error: '候选不存在或已过期，请重新扫描' });
     const record = cand.record || {
       provider: body.provider === 'qoder-cn' ? 'qoder-cn' : 'qoder',
@@ -495,6 +555,8 @@ async function handleApi(req, res, url) {
       zcodeCurrentUid: currentZcodeUid(),
       zcodeCurrentIdentity: currentZcodeIdentity(),
       zcodeClient: (() => { const d = detectZcode(); return { installed: d.exists, signedIn: d.signedIn, running: zcodeRunning() }; })(),
+      mirasimCurrentUid: currentMirasimUid(),
+      mirasimClient: (() => { const d = detectMirasim(); return { installed: d.clientInstalled, signedIn: d.signedIn, running: d.running }; })(),
       keyRequired: Boolean(PANEL_KEY),
     });
   }

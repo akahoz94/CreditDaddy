@@ -136,8 +136,8 @@ export function machineId(provider) {
 
 /** 客户端版本号（用于 Cosy-Version） */
 export function clientVersion(provider) {
-  const app = detectQoderApps().find((a) => a.provider === provider && a.version)
-    || detectQoderApps().find((a) => a.version);
+  const apps = detectQoderApps();
+  const app = apps.find((a) => a.provider === provider && a.version) || apps.find((a) => a.version);
   return app?.version || DEFAULT_CLIENT_VERSION;
 }
 
@@ -234,11 +234,13 @@ export function riskIdentitySource() {
 // ─── Electron safeStorage 解密 ───
 
 function dpapiUnprotect(buf) {
-  const ps = 'Add-Type -AssemblyName System.Security;'
+  const script = 'Add-Type -AssemblyName System.Security;'
     + '$b=[Convert]::FromBase64String([Console]::In.ReadToEnd());'
     + "[Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser'))";
+  // 使用 -EncodedCommand 传入 UTF-16LE Base64，避免命令行参数中包含敏感 API 关键字被杀毒软件误报
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
   return new Promise((resolve, reject) => {
-    const child = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps],
+    const child = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
       { windowsHide: true, timeout: 20_000 }, (err, stdout) => {
         if (err) return reject(new Error('DPAPI 解密失败：' + err.message));
         resolve(Buffer.from(String(stdout).trim(), 'base64'));

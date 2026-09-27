@@ -12,7 +12,7 @@ import { productOf } from './constants.js';
 import { checkinOne as checkinQoder, fetchQuotaUsage, fetchUserinfo } from './qoderClient.js';
 import { checkinWorkbuddy, checkinWorkbuddyIntl, fetchWorkbuddyQuota, inspectToken } from './workbuddyClient.js';
 import { fetchZcodeQuota } from './zcodeClient.js';
-
+import { fetchMirasimQuota, fetchMirasimProfile } from './mirasimClient.js';
 /** 从 userinfo 响应中挑一个可读的显示名 */
 export function displayNameFrom(ui) {
   const pick = [ui?.nickname, ui?.name, ui?.username, ui?.email]
@@ -67,6 +67,30 @@ const PRODUCTS = {
     quota: (account) => fetchZcodeQuota(account),
     verify: async () => {
       throw new Error('ZCode 账号请通过「本机导入」添加（需要客户端的完整登录快照才能查询额度与切换）');
+    },
+  },
+  mirasim: {
+    label: 'mirasim',
+    // 无 checkin：mirasim 额度按 5h/7d 滚动窗口分配，不设签到。
+    // token 约 1 小时过期：quota 内部 401 时自动用 refreshToken 续期，
+    // ctx.onRefresh（refreshContext）回写账号库后，这里再把新凭据同步回 setting.json（若该账号是客户端当前登录）。
+    quota: async (account, ctx = {}) => {
+      const mirasimLocal = await import('./mirasimLocal.js');
+      const wrapped = {
+        ...ctx,
+        onRefresh: async (creds) => {
+          await ctx.onRefresh?.(creds);
+          try {
+            const synced = await mirasimLocal.writeMirasimAuth({ uid: account.uid, token: creds.token, refreshToken: creds.refreshToken, expiresAt: creds.expiresAt });
+            if (synced) ctx.log?.('已同步新 token 到 mirasim 客户端');
+          } catch (e) { ctx.log?.('同步到 mirasim 客户端失败：' + e.message); }
+        },
+      };
+      return fetchMirasimQuota(account, wrapped);
+    },
+    verify: async (account) => {
+      const p = await fetchMirasimProfile(account.token);
+      return { name: p.name || p.email, uid: p.id, email: p.email };
     },
   },
 };

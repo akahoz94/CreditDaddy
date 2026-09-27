@@ -172,6 +172,15 @@ export function maskToken(token) {
 
 const maskPhone = (p) => (typeof p === 'string' && p.length >= 7 ? p.slice(0, 3) + '****' + p.slice(-4) : null);
 
+function zcodeFlavor(meta) {
+  if (!meta) return null;
+  const c = meta.credentials || {};
+  const keys = Object.keys(c);
+  const hasZai = Boolean(c['oauth:zai:access_token'] || meta.loginProvider === 'zai' || keys.some((k) => k.includes('zai')));
+  const hasBig = Boolean(c['oauth:bigmodel:access_token'] || meta.loginProvider === 'bigmodel' || keys.some((k) => k.includes('bigmodel')));
+  return hasZai && hasBig ? 'both' : hasZai ? 'zai' : hasBig ? 'bigmodel' : null;
+}
+
 /** 对外输出的脱敏账号视图 */
 export function publicAccount(a) {
   const meta = a.meta || {};
@@ -189,6 +198,7 @@ export function publicAccount(a) {
     source: a.source || 'manual',
     phone: maskPhone(meta.phone),
     domain: meta.domain || null,
+    flavor: a.provider === 'zcode' ? zcodeFlavor(meta) : null,
     canSwitch: Boolean(meta.session?.account || meta.credentials),
     verified: a.verified ?? null,
     createdAt: a.createdAt,

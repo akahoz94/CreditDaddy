@@ -59,7 +59,7 @@
 ## 功能
 
 **多账号管理与切换**
-- **仪表盘 + 分产品标签页**：首页仪表盘汇总账号总数、今日领取进度、剩余总积分、下次自动执行时间、各产品概况、待处理异常账号（token 失效 / 即将过期、领取失败）与最近领取审计；Qoder、WorkBuddy、ZCode 各自独立标签页，卡片式展示，支持国内 / 国际版筛选，直观查看连续天数与额度包到期，自适应亮色 / 暗色主题。
+- **仪表盘 + 分产品标签页**：首页仪表盘汇总账号总数、今日领取进度、剩余总积分、下次自动执行时间、各产品概况、待处理异常账号（token 失效 / 即将过期、领取失败）与最近领取审计；Qoder、WorkBuddy、ZCode 各自独立标签页，卡片式展示，支持国内 / 国际版筛选，直观查看连续天数与额度包到期，自适应亮色 / 暗色主题。右上角「组件开关」可整块收起不使用的产品 / 10Router 标签页与仪表盘卡片（偏好保存在浏览器本地）。
 - **本机导入**：一键安全读取本机已登录的客户端凭据 —— 本地解密 Qoder / Qoder CN 的 `auth.v1.dat`，读取 WorkBuddy 客户端（当前与历史会话），解密 ZCode 凭据。敏感 Token 绝不出机器；同一用户续期时自动覆盖。
 - **客户端一键换号**：一键将桌面客户端切换至指定账号（WorkBuddy 自动热切换；ZCode 退出客户端后写回），切号前自动保存当前在线 Token，各账号拥有独立设备指纹，杜绝风控串号。
 - **内置隐私（无痕）授权**：桌面版提供隔离的一次性会话窗口进行网页登录授权，不污染系统浏览器 Cookie，支持同平台无缝扩增多账号。
@@ -98,6 +98,11 @@
 - **国际版领取与设备风控**：Qoder 国际版服务端严格校验设备风控身份（`Cosy-MachineToken / Cosy-MachineCode / Cosy-MachineType`）。
 - **设备组件依赖**：风控凭据由本机已安装的 Qoder 客户端组件生成（每 50 分钟刷新）。每台设备每日限领一个国际版账号，列表靠前账号优先领取。
 - **Linux / fnOS 设备组件安装**：无客户端环境下，面板提供一键安装「设备身份组件」（或执行 `creditdaddy umid install`），自动从官方 `@qoder-ai/qodercli` 中提取 Linux x64 / arm64 UMID 核心组件。国内版不受风控限制，全部账号可正常签到。
+
+### mirasim（原生 AI 编程开发环境）
+- **账号来源**：读取 `~/.mirasim/setting.json`，本地通过 `secret.key` 派生密钥解密 `mrs1:` AES-256-GCM 凭据，敏感 Token 绝不出机。
+- **额度与套餐**：通过 `auth.mirasim.ai/auth/me` 查询当前套餐（Pro/Plus）及到期时间；通过 `relay.mirasim.ai/v1/limits` 查询「平台额度」（5小时滚动窗口、7天全局上限与分模型 Claude 上限）。支持直连与代理优先切换，防止网络区域限制。
+- **客户端切号**：一键切换当前登录账号并写回 `setting.json`（保留工作区与模型配置不变），切号前自动同步当前在线 Token；桌面版切换成功后自动重新拉起 Mirasim 客户端。
 
 ## 快速开始
 
@@ -168,7 +173,8 @@ creditdaddy help                    # 查看完整命令行帮助
 | `POST` | `/api/local/scan` | 读取本机已登录的全部账号候选 |
 | `POST` | `/api/local/import` | 批量将检测到的候选账号导入入库 |
 | `GET` | `/api/status` | 获取服务运行状态、版本号及风控组件状态 |
-| `GET` / `PUT` | `/api/tenrouter` | 查询 / 配置 10Router 集成参数 `{endpoint, key?, syncEnabled?, sources?}` |
+| `GET` / `PUT` | `/api/zcode/net` | ZCode 出口偏好（直连 / 代理优先、代理地址、活动自动领取开关） |
+| `GET` / `PUT` / `DELETE` | `/api/tenrouter` | 查询 / 配置 / 清除 10Router 集成参数 `{endpoint, key?, syncEnabled?, sources?}` |
 | `POST` | `/api/tenrouter/test` | 测试 10Router 连通性与 Key 有效性 |
 | `GET` | `/api/tenrouter/quotas` | 获取 10Router 聚合的外部供应商配额总览 |
 | `GET` | `/api/tenrouter/health` | 检查 10Router 服务端自身健康状态 |

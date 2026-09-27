@@ -35,6 +35,8 @@ export function zcodePaths() {
     home: h,
     credentials: path.join(v2, 'credentials.json'),
     config: path.join(v2, 'config.json'),
+    setting: path.join(v2, 'setting.json'),
+    providerConfig: path.join(v2, 'provider_config.json'),
     telemetry: path.join(v2, 'telemetry-state.json'),
   };
 }
@@ -79,6 +81,8 @@ export function liveToAccount(secretOpts) {
     meta: {
       credentials: creds,
       config: readJson(p.config),
+      setting: readJson(p.setting),
+      providerConfig: readJson(p.providerConfig),
       canonicalHash: zc.canonicalHash(creds),
       // 沿用本机当前的设备 ID：切回这个账号时还原成它原本的设备身份
       deviceMid: readJson(p.telemetry)?.deviceMid || null,
@@ -195,9 +199,107 @@ export function switchTo(account, { force = false } = {}) {
   }
 
   atomicWriteJson(p.credentials, account.meta.credentials);
-  if (account.meta.config) atomicWriteJson(p.config, account.meta.config);
+  ensureCodingPlanIdentity(account, p);
+
+  // 深度对齐 config.json：保证目标账号对应渠道（zai / bigmodel）处于启用状态，避免出现套餐「未登录」
+  const creds = account.meta.credentials || {};
+  const isZai = Boolean(creds['oauth:zai:access_token'] || account.meta.loginProvider === 'zai' || Object.keys(creds).some((k) => k.includes('zai')));
+  const isBig = Boolean(creds['oauth:bigmodel:access_token'] || account.meta.loginProvider === 'bigmodel' || Object.keys(creds).some((k) => k.includes('bigmodel')));
+
+  const cfg = account.meta.config || readJson(p.config) || { provider: {} };
+  cfg.provider = cfg.provider || {};
+  if (isZai) {
+    if (cfg.provider['builtin:zai']) cfg.provider['builtin:zai'].enabled = true;
+    if (cfg.provider['builtin:zai-start-plan']) cfg.provider['builtin:zai-start-plan'].enabled = true;
+    if (cfg.provider['builtin:bigmodel']) cfg.provider['builtin:bigmodel'].enabled = false;
+  } else if (isBig) {
+    if (cfg.provider['builtin:bigmodel']) cfg.provider['builtin:bigmodel'].enabled = true;
+    if (cfg.provider['builtin:bigmodel-coding-plan']) cfg.provider['builtin:bigmodel-coding-plan'].enabled = true;
+    if (cfg.provider['builtin:zai']) cfg.provider['builtin:zai'].enabled = false;
+    if (cfg.provider['builtin:zai-start-plan']) cfg.provider['builtin:zai-start-plan'].enabled = false;
+  }
+  atomicWriteJson(p.config, cfg);
+
+  // 深度对齐 setting.json：即使账号未保存过 setting 快照，也自动修复选择器 key
+  const set = account.meta.setting || readJson(p.setting) || {};
+  set.modelProviderFamilyModes = set.modelProviderFamilyModes || {};
+  set.modelProviderFamilySelectedKeys = set.modelProviderFamilySelectedKeys || {};
+  // providerFamilyDomain 是客户端模型页的「家族显示开关」：
+  // 设为 zai 时整个 BigModel 家族被隐藏（反之亦然），切号必须与 active_provider 同步对齐，
+  // 否则客户端界面上目标渠道一栏直接消失 / 显示未登录（zcode-switch 同样写这个字段）。
+  if (isZai) {
+    set.modelProviderFamilyModes.zai = 'oauth';
+    set.modelProviderFamilySelectedKeys.zai = 'coding-plan:builtin:zai-start-plan';
+    set.providerFamilyDomain = 'zai';
+  } else if (isBig) {
+    set.modelProviderFamilyModes.bigmodel = 'oauth';
+    set.modelProviderFamilySelectedKeys.bigmodel = 'coding-plan:builtin:bigmodel-coding-plan';
+    set.providerFamilyDomain = 'bigmodel';
+  }
+  if (set.providerFamilyDomain) set.providerFamilyDomainUpdatedAt = Date.now();
+  atomicWriteJson(p.setting, set);
+
+  // 深度对齐 provider_config.json：默认模型选择指向目标账号的 Coding Plan，否则客户端模型页会判定「未登录」
+  if (account.meta.providerConfig) atomicWriteJson(p.providerConfig, account.meta.providerConfig);
+  alignDefaultModelSelection(account, isZai ? 'zai' : isBig ? 'bigmodel' : null);
+
   writeVirtualDeviceMid(account);
   return { switched: true, alreadyActive: false };
+}
+
+/** ZCode 客户端判定套餐已登录的必要键：account-provider:<providerId>:identity（值为该账号身份 ID）。
+ *  缺失时客户端 nPn/oPn 读不到 accountIdentity，直接跳过该套餐 → 界面显示「未登录」。 */
+export function ensureCodingPlanIdentity(account, paths = zcodePaths()) {
+  const creds = account?.meta?.credentials;
+  if (!creds) return;
+  const secret = zc.defaultSecret(paths.home);
+  let changed = false;
+
+  const putIdentity = (providerId, identity) => {
+    if (!identity) return;
+    const key = `account-provider:${providerId}:identity`;
+    if (creds[key]) return; // 已有则不覆盖
+    creds[key] = zc.encryptWithSecret(String(identity), secret);
+    changed = true;
+  };
+
+  // BigModel：身份 ID 取自 oauth:bigmodel:user_info.id
+  const bigInfo = zc.decryptJsonOpt(creds['oauth:bigmodel:user_info'], secret);
+  const bigUid = bigInfo?.id ?? bigInfo?.user_id ?? null;
+  if (bigUid) {
+    putIdentity('account:bigmodel-individual-coding-plan', bigUid);
+    putIdentity('account:bigmodel-team-coding-plan', bigUid);
+  }
+
+  // Z.ai：身份 ID 取自 oauth:zai:user_info.user_id
+  const zaiInfo = zc.decryptJsonOpt(creds['oauth:zai:user_info'], secret);
+  const zaiUid = zaiInfo?.user_id ?? zaiInfo?.id ?? null;
+  if (zaiUid) {
+    putIdentity('account:zai-individual-coding-plan', zaiUid);
+    putIdentity('account:zai-team-coding-plan', zaiUid);
+    putIdentity('account:zai-start-plan', zaiUid);
+  }
+
+  if (changed) atomicWriteJson(paths.credentials, creds);
+}
+
+/** 把 provider_config.json 的 defaultModelSelection 指向目标账号对应的 Coding Plan */
+export function alignDefaultModelSelection(account, family) {
+  if (!family) return;
+  const p = zcodePaths();
+  const file = p.providerConfig;
+  if (!fs.existsSync(file)) return;
+  const cfg = readJson(file);
+  if (!cfg || typeof cfg !== 'object') return;
+  cfg.config = cfg.config || {};
+
+  const providerId = family === 'zai'
+    ? 'account:zai-individual-coding-plan'
+    : 'account:bigmodel-individual-coding-plan';
+  const modelId = family === 'zai' ? 'glm-5.3-flash' : 'glm-5.3';
+  cfg.config.defaultModelSelection = { providerId, modelId };
+  atomicWriteJson(file, cfg);
+  return providerId;
 }
 
 /** 每个账号的虚拟设备 ID（随机生成一次，落在 account.meta.deviceMid），切换时写回 telemetry-state.json */

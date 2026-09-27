@@ -156,9 +156,11 @@ test('本机模式拒绝 DNS 重绑定与跨站请求', () => {
   assert.equal(rejectForeignRequest({ host: '[::1]:47860' }, bind), null);
   assert.ok(rejectForeignRequest({ host: 'evil.example.com' }, bind), '陌生 Host 应被拒绝');
   assert.ok(rejectForeignRequest({ host: '127.0.0.1:47860', origin: 'https://evil.example.com' }, bind), '跨站 Origin 应被拒绝');
-  // NAS 模式（0.0.0.0）允许任意 Host（靠访问密钥保护），但仍拒绝跨站
-  assert.equal(rejectForeignRequest({ host: '192.168.1.10:47860' }, '0.0.0.0'), null);
-  assert.ok(rejectForeignRequest({ host: '192.168.1.10:47860', origin: 'http://evil.lan' }, '0.0.0.0'));
+  // NAS 模式（0.0.0.0）未设访问密钥时：本机地址 / 主机名的 Host 放行，外部域名拒绝（防 DNS 重绑定）
+  assert.equal(rejectForeignRequest({ host: `${os.hostname()}:47860` }, '0.0.0.0'), null);
+  assert.equal(rejectForeignRequest({ host: 'localhost:47860' }, '0.0.0.0'), null);
+  assert.ok(rejectForeignRequest({ host: 'evil.example.com' }, '0.0.0.0'), '0.0.0.0 无密钥时外部域名 Host 应被拒绝');
+  assert.ok(rejectForeignRequest({ host: '192.168.1.10:47860', origin: 'http://evil.lan' }, '0.0.0.0'), '跨站 Origin 仍应被拒绝');
 });
 
 test('extractTokens 提取并去重 dt-/pt- token', () => {
@@ -207,6 +209,28 @@ test('WorkBuddy 会话文件 → 账号记录（保留会话以便切换）', ()
   assert.equal(pub.phone, '138****1234');
   assert.equal(pub.canSwitch, true);
   assert.equal(JSON.stringify(pub).includes('r-1'), false, '脱敏视图不含 refreshToken');
+});
+
+test('mirasim：正确注册到产品线与适配器', async () => {
+  const { productImpl } = await import('../src/providers.js');
+  const { productOf, PROVIDERS } = await import('../src/constants.js');
+  assert.ok(PROVIDERS.includes('mirasim'));
+  assert.equal(productOf('mirasim'), 'mirasim');
+  const impl = productImpl('mirasim');
+  assert.equal(impl.label, 'mirasim');
+  assert.equal(typeof impl.quota, 'function');
+  assert.equal(typeof impl.verify, 'function');
+
+  const acc = store.normalizeAccountInput({
+    provider: 'mirasim',
+    token: 'test-token',
+    uid: 'usr_123',
+    name: '我的mirasim',
+  });
+  assert.equal(acc.provider, 'mirasim');
+  const pub = store.publicAccount(acc);
+  assert.equal(pub.product, 'mirasim');
+  assert.equal(pub.name, '我的mirasim');
 });
 
 test('Qoder 配额归一化为统一积分结构', () => {

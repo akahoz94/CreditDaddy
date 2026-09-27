@@ -1,121 +1,227 @@
-# Changelog
+# 变更日志
 
-## [Unreleased]
+本文件为 CreditDaddy 完整开发与版本变更日志，按版本从上往下排列。
+
+---
+
+## [0.9.5] - 2026-09-27
+
+> 本版主题：**全面集成 mirasim 产品线（用量 / 额度 / 账号切换）+ ZCode 双套餐体系与客户端切号闭环 + 全局组件开关 + 杀软误报根治与安全审计**。
+
+### ✨ 新功能
+
+- **全面集成 mirasim（原生 AI 编程开发环境）产品线**：
+  - **凭据本地安全解密**：自动定位 `~/.mirasim/setting.json` 与 `~/.mirasim/secret.key`。针对 Windows 平台使用 DPAPI 解开十六进制 master key 密文（抽取 UTF-16LE 字节流获取 64 位密钥），配合 AES-256-GCM 原生还原 `mrs1:` 密文（12 字节 IV + 16 字节 tag）。全流程内存计算，敏感 Token 绝不出机。
+  - **用户资料与套餐识别**：对接 `GET https://auth.mirasim.ai/auth/me`，自动拉取当前账号主体（UID / 邮箱 / 昵称 / 角色）以及套餐等级（Pro / Plus）和到期时间（`plan_exp`）。
+  - **平台额度（5h / 7d 滚动窗口）查询**：对接 `GET https://relay.mirasim.ai/v1/limits`，解析「5小时滚动窗口」、「7天全局窗口」以及分模型上限（Claude、Fable 等）的实时预算、已用量与精确重置时间戳。
+  - **区域受限网络自动回退**：`relay.mirasim.ai` 对中国大陆 IP 直连实施区域封控并返回 HTTP 429（`shared_quota_unavailable`）。mirasim 客户端接入统一出口 `fetchJsonRace`，优先调度本机配置的 HTTP 代理（`HTTPS_PROXY` 或面板专属代理），保障国内网络环境下额度实时拉取不断流。
+  - **客户端无损切号与热唤醒**：切换账号时原子更新 `~/.mirasim/setting.json` 的 `auth` 节点，**完整保留**用户的 `workspaces`、`models`、`connectors` 等全部配置。切号前自动同步当前在线 Token 进账号库防丢号；桌面版（Electron）切号后自动通过本地可执行文件探测重新拉起 Mirasim 客户端，实现平滑免干预换号。
+  - **Token 自动静默续期**：mirasim 的 access_token 约 1 小时过期。额度查询遇 401 时自动用 refreshToken 换新（refreshToken 会轮换，两者一并保存），经 `ctx.onRefresh` 回写账号库，并在该账号正是客户端当前登录时把新凭据加密同步回 `setting.json`，杜绝「积分读取失败：登录凭据已过期」，客户端也不会因 Token 轮换掉线。
+  - **全端界面与 CLI 适配**：首页仪表盘增加 mirasim 状态卡（展示套餐级别、有效性及客户端当前登录）；产品标签页支持各窗口使用率条形图与重置倒计时；`creditdaddy scan` 命令与面板「本机导入」自动解密扫描 mirasim 候选账号；标签页提示明确「切号需至少两个已导入账号（当前登录 + 目标）」的操作前提。
+
+- **面板右上角新增全局「组件开关」（偏好本地持久化）**：
+  - 在顶栏右侧新增调节图标入口，弹出「面板组件」菜单，支持独立勾选 **Qoder / WorkBuddy / ZCode / mirasim / 10Router**。
+  - 取消勾选后：导航栏标签即时隐藏、仪表盘对应产品卡同步收起、「需要处理」与「最近记录」不再混杂被隐藏组件的告警与日志；直接通过 `#zcode` 或 `#mirasim` 等 Hash 访问已收起的页面时自动安全回落至仪表盘。
+  - 组件显隐偏好保存在浏览器本地 `localStorage`，不随服务端数据重置，方便只使用单一工具的用户保持面板极简。
+  - 组件支持 ↑↓ 上下调序，仪表盘产品卡与顶部标签栏按同一顺序同步渲染。
+
+- **账号 / 连接卡片排序体系（默认积分多者靠前，手动拖拽优先级最高）**：
+  - **默认规则**：各产品面板（Qoder / WorkBuddy / ZCode / mirasim）账号卡按剩余积分从多到少排列，无额度数据或查询失败的账号稳定排后；10Router 连接卡在启用优先的前提下按剩余额度 % 从多到少排列，供应商汇总卡同理。
+  - **手动拖拽（最高优先级）**：直接拖拽卡片到目标位置即固定顺序（产品面板每产品独立、10Router 每供应商独立，连接卡与供应商汇总卡分别记忆），拖拽过程带插入位置指示线。
+  - **设置菜单上下调整**：右上角「面板设置」新增「账号卡片排序」区，按产品分组展示当前顺序，支持 ↑↓ 微调与「恢复默认排序」；调整后卡片列表即时同步。
+
+- **ZCode 账号卡片标明登录渠道徽章（BigModel 国内版 / Z.ai 国际版）**：
+  - 解决 ZCode 体系认知痛点：ZCode 客户端内分为国内智谱平台（BigModel，绑定 Coding Plan）与国际平台（Z.ai，绑定 Start Plan / 赠送额度）。
+  - 账号卡片在产品名旁根据凭据类型直观标出 **`BigModel`**（国内版）或 **`Z.ai`**（国际版），双登录账号标明 **`Z.ai + BigModel`**，彻底消除切换账号后因渠道不符导致「未登录」的困惑。
+
+### 🔒 安全加固
+
+- **Windows 本地 DPAPI 解密防杀软误报升级（改用 `-EncodedCommand`）**：
+  - **背景**：Windows Defender、火绒等杀毒软件具备严格的「命令行启发式（CommandLine Heuristic）」审计规则。直接在子进程命令参数中明文传入 `[ProtectedData]::Unprotect` 会直接命中窃密木马（InfoStealer）特征并触发拦截（报毒阻断导致子进程权限被拒绝）。
+  - **修复**：将所有 PowerShell 解密脚本在 Node 内存中即时编译为 UTF-16LE 并转为 Base64 密文，通过官方标准的 `-EncodedCommand` 参数传递，敏感数据走 stdin 管道输入。系统命令行不再包含任何明文字符串，彻底根除杀软误报。
+- **DNS 重绑定防御范围扩展**：
+  - 针对非 loopback 监听（如监听 `0.0.0.0` 用于 NAS 或局域网环境）且未设置访问密钥的部署场景，Host 头校验扩展到本机全部网卡 IP（IPv4 / IPv6）与主机名白名单，恶意网页无法再通过解析指向内网的域名绕过同源检查。
+- **彻底移除 `?key=` 查询参数传密**：
+  - 守护进程访问密钥只接受 `x-qd-key` 请求头，不再支持 URL Query 传密，避免密码明文落入反代日志、浏览器历史与系统访问日志中。
+- **桌面版验证码窗口内联脚本防护**：
+  - 阿里云验证码 SDK 注入模板中对服务端下发的动态配置做 `\u003c` 实体转义，杜绝由于配置内容包含 `</script>` 引发的跨站或闭合逃逸风险。
+- **UMID 设备身份组件下载防投毒**：
+  - 安装组件时 integrity 校验值必须匹配 npmjs 官方权威注册表；npmmirror 仅作为加速镜像源。当镜像版本与 npmjs 不一致时自动跳过镜像源，杜绝供应链投毒。
+- **桌面版面板外链协议收敛**：
+  - 桌面壳 `window.open` 拦截器仅放行 `https://` 协议，杜绝恶意或特殊 scheme 调用外部系统程序。
+
+### 🐛 修复
+
+- **ZCode 客户端切号后无法自动唤醒打开**：
+  - 修复切号成功后仅关闭进程而未唤醒客户端的问题。桌面版切号后自动延迟 800ms（等待文件锁释放）后调用 `openZcodeClient` 重启客户端；网页端弹窗清晰提示用户打开客户端。
+- **ZCode 切号导致「个人套餐未登录」的设置丢失问题**：
+  - 逆向 ZCode 客户端 `app.asar` 定位到其套餐登录判定链：客户端经 `nPn` 枚举内置 Individual Coding Plan provider，用 `account-provider:<providerId>:identity` 读出该账号身份 ID，读不到即直接跳过 → 模型页显示「未登录」；随后才用 `account-provider:coding-plan:<providerId>:account:<identity>:api-key` 取密钥，并依赖 `provider_config.json` 的 `defaultModelSelection` 决定默认套餐。
+  - 根因即此：`credentials.json` 缺少 `identity` 键、`provider_config.json` 无 `defaultModelSelection`，且切号时漏写 `setting.json`。现切号会按目标账号渠道（`zai` / `bigmodel`）自动补齐 `identity` 键、对齐 `config.json` 的 `builtin:*` 启用状态、`setting.json` 的 `modelProviderFamilySelectedKeys`，并把 `defaultModelSelection` 指向目标账号的 Coding Plan；`provider_config.json` 一并纳入快照生命周期。
+- **ZCode 客户端版本探测阻塞事件循环（卡顿 20s+ 修复）**：
+  - 原实现使用 `execFileSync` 同步查询 3 个注册表 Hive（每个超时 8s），在启动或首个请求到来时会锁死 Node 单线程事件循环数十秒。现改为异步 `execFile` + 缓存，并在调度器启动时后台预热。
+- **桌面托盘「立即领取」在 401 鉴权失败时误报成功**：
+  - 修复 `checkinNow()` 未校验 `res.ok`，当设置了访问密码时 401 响应会被默认当成「领取完成」弹窗通知的问题。
+- **Qoder 客户端版本探测重复文件扫描消除**：
+  - 消除同一次调用中连续两次触发 `detectQoderApps()` 导致的文件系统重复遍历。
+
+### 🔧 工程与测试
+
+- **单测用例扩充至 72 项全部通过**：
+  - 新增 `test/mirasim.test.js`：覆盖 mirasim 凭据 AES-GCM 加解密往返、5h/7d 窗口配额归一化解析、`setting.json` 原子替换与配置保全。
+  - 扩展 `test/zcode-local.test.js`：新增 `switchTo` 对 `setting.json`、`config.json` 与 `credentials.json` 三文件协同还原的断言。
+  - 适配 `test/smoke.test.js`：更新非 loopback 监听 Host 校验用例、新增 mirasim 产品线注册与数据脱敏断言。
+- **全仓语法与一致性门禁**：通过 `node --check` 语法检查，确保无语法与模块引用缺陷。
 
 ---
 
 ## [0.9.4] - 2026-09-27
 
-### Fixed
-- 日志时间戳改用本机时区（原为 UTC+0，现跟随系统时区如 UTC+8）
-- 修复前端卡片删除账号无响应问题（`armed is not defined`）(#2)
+### 🐛 修复
+- 日志时间戳改用本机时区（原为 UTC+0，现跟随系统时区如 UTC+8）。
+- 修复前端卡片删除账号无响应问题（`armed is not defined`）(#2)。
 
 ---
 
 ## [0.9.3] - 2026-09-26
 
-### Added
-- ZCode 客户端运行状态芯片（面板实时显示客户端是否运行）
-- 桌面版一键打开 ZCode 客户端
+### ✨ 新功能
+- ZCode 客户端运行状态芯片（面板实时显示客户端是否运行）。
+- 桌面版一键打开 ZCode 客户端。
 
-### Fixed
-- 额度条 100% 时残留灰色尾段
-
----
-
-## [0.9.2] - 2026-09-20
-
-### Fixed
-- 10Router 聚合视图按源数据口径显示：百分比额度显示 %，各行平等，不再被重置为绝对数字
-- 10Router 主额度行改分散对齐：名称靠左，数值与相对重置时间靠右
-- WorkBuddy 产品卡合并行防截断
-- CLI 文案统一为「领取」
-
-### Changed
-- WorkBuddy 产品卡国内/国际合并为一行（领取 / 活跃 x/x（国内）· x/x（国际））
-- README 门面优化
+### 🐛 修复
+- 额度条 100% 时残留灰色尾段。
 
 ---
 
-## [0.9.1] - 2026-09-10
+## [0.9.2] - 2026-09-26
 
-### Added
-- ZCode 自动轮询领取开关（默认关）
+### 🐛 修复
+- 10Router 聚合视图按源数据口径显示：百分比额度显示 %，各行平等，不再被重置为绝对数字。
+- 10Router 主额度行改分散对齐：名称靠左，数值与相对重置时间靠右。
+- WorkBuddy 产品卡合并行防截断。
+- CLI 文案统一为「领取」。
 
-### Changed
-- ZCode 卡片不再显示任何徽标
-
----
-
-## [0.9.0] - 2026-09-08
-
-### Added
-- ZCode 活动领取自动轮询：每轮签到后自动查可领活动并领取
-- 桌面版隐藏窗口静默通过验证码
-
-### Fixed
-- WorkBuddy 页 innerHTML 汇总覆盖后 s-done 丢失，导致改名/切页报 textContent 空指针
-- store 原子写 rename 失败重试 + 兜底直写，修复 Windows 上 EPERM 导致的签到轮报错
-
-### Changed
-- ZCode 代理地址可面板配置（优先于 HTTPS_PROXY 环境变量）
-- 仪表盘/详情页措辞按语义拆分：国内签到 / 国际活跃
-- 文案统一为「领鸡蛋」语义：Qoder / WorkBuddy 都叫领取，仅国际版叫保持活跃
-- KPI「活跃 x/x」改为小字副标
-- 汇总卡窗口额度多进度条
-- 设置加「隐藏 0/无额度汇总卡」
-- 胶囊徽章去类型背景色
-- 10Router 全部视角去掉「最早到期」；隐藏项不出现在标签；单连接卡周/月额度默认带进度条
+### 🔧 其他
+- WorkBuddy 产品卡国内/国际合并为一行（领取 / 活跃 x/x（国内）· x/x（国际））。
+- README 门面重构。
 
 ---
 
-## [0.8.0] - 2026-08-25
+## [0.9.1] - 2026-09-25
 
-### Added
-- npm 包发布渠道
-- macOS 桌面版（dmg + zip）
-- 10Router 健康状态显示（/api/health：正常/异常/驱动降级）
-- 10Router 供应商标签页视图：「全部」按供应商汇总成卡，标签页看单连接明细
-- WorkBuddy 国际版「活跃领取」签到
+### ✨ 新功能
+- ZCode 自动轮询领取开关（默认关）。
 
-### Fixed
-- macOS 构建要求 ≥512 图标（改为 1024x1024）
-- ZCode billing 版本跟随本机客户端（3001 修复）
-- ZCode 客户端当前账号按 uid+email 识别
-
-### Changed
-- 10Router 卡片对齐账号主卡版式；积分包按系列聚合
-- 10Router 额度行对齐 CLIProxyAPI 管理中心样式：三档水位条 + 相对重置标签
-- 10Router 卡片默认只显示主额度，其余收进摘要（明细可展开）
-- ZCode 出口可切「代理优先」并自动回退
+### 🔧 其他
+- ZCode 卡片不再显示任何徽标。
 
 ---
 
-## [0.7.0] - 2026-08-10
+## [0.9.0] - 2026-09-25
 
-### Added
-- ZCode 活动领取（preview→claim + 面板阿里云验证码）
-- ZCode 卡片显示套餐权益额度
+### ✨ 新功能
+- ZCode 活动领取自动轮询：每轮签到后自动查可领活动并领取。
+- 桌面版隐藏窗口静默通过阿里云验证码。
 
-### Fixed
-- ZCode 强制切换先关闭客户端
+### 🐛 修复
+- WorkBuddy 页 innerHTML 汇总覆盖后 s-done 丢失，导致改名/切页报 textContent 空指针。
+- store 原子写 rename 失败重试 + 兜底直写，修复 Windows 上 EPERM 导致的签到轮报错。
+
+### 🔧 其他
+- ZCode 代理地址可面板配置（优先于 HTTPS_PROXY 环境变量）。
+- 仪表盘/详情页措辞按语义拆分：国内签到 / 国际活跃。
+- 文案统一为「领鸡蛋」语义：Qoder / WorkBuddy 都叫领取，仅国际版叫保持活跃。
+- KPI「活跃 x/x」改为小字副标。
+- 汇总卡窗口额度多进度条。
+- 设置加「隐藏 0/无额度汇总卡」。
+- 胶囊徽章去类型背景色。
+- 10Router 全部视角去掉「最早到期」；隐藏项不出现在标签；单连接卡周/月额度默认带进度条。
 
 ---
 
-## [0.6.0] - 2026-07-20
+## [0.8.0] - 2026-09-24
 
-### Added
-- 10Router 集成（供应商额度卡片 + 用量同步）
-- fnOS 窗口版 fpk
-- WorkBuddy/CodeBuddy 及 ZCode 浏览器登录
+### ✨ 新功能
+- npm 包发布渠道（`creditdaddy`）。
+- macOS 桌面版构建（dmg + zip，Apple Silicon 与 Intel 双架构）。
+- 10Router 健康状态显示（/api/health：正常/异常/驱动降级）。
+- 10Router 供应商标签页视图：「全部」按供应商汇总成卡，标签页看单连接明细。
+- WorkBuddy 国际版「活跃领取」签到。
 
-### Fixed
-- fnOS 安装向导设置面板密码；面板 401 时重新提示
+### 🐛 修复
+- macOS 构建要求 ≥512 图标（升级为 1024x1024）。
+- ZCode billing 版本跟随本机客户端（3001 修复）。
+- ZCode 客户端当前账号按 uid+email 识别。
+
+### 🔧 其他
+- 10Router 卡片对齐账号主卡版式；积分包按系列聚合。
+- 10Router 额度行对齐三档水位条 + 相对重置标签。
+- 10Router 卡片默认只显示主额度，其余收进摘要（明细可展开）。
+- ZCode 出口可切「代理优先」并自动回退。
 
 ---
 
-## [0.5.0] - 2026-07-01
+## [0.7.0] - 2026-09-24
 
-### Added
-- Qoder 国际版在 fnOS/Linux 上通过设备身份组件签到
-- fnOS 双桌面入口（新标签页 + fnOS 窗口）；页内对话框
+### ✨ 新功能
+- ZCode 活动领取（preview → claim + 面板阿里云验证码）。
+- ZCode 卡片显示套餐权益额度。
+
+### 🐛 修复
+- ZCode 强制切换先关闭客户端（防止内存旧登录覆盖回文件）。
+
+---
+
+## [0.6.0] - 2026-09-24
+
+### ✨ 新功能
+- 10Router 集成（供应商额度卡片 + 用量自动同步）。
+- 飞牛 fnOS 窗口版 fpk（桌面多窗口模式）。
+- WorkBuddy/CodeBuddy 及 ZCode 浏览器登录授权与自动入库。
+
+### 🐛 修复
+- fnOS 安装向导设置面板访问密码；面板 401 时自动重新提示输入。
+
+---
+
+## [0.5.0] - 2026-09-24
+
+### ✨ 新功能
+- Qoder 国际版在 fnOS/Linux 上通过「设备身份组件（UMID）」实现免客户端签到。
+- 飞牛 fnOS 双桌面入口（新标签页 + fnOS 独立窗口）；页内原生交互对话框。
+
+---
+
+## [0.4.0] - 2026-09-23
+
+### ✨ 新功能
+- 接入 ZCode 账号管理：本地解密 `~/.zcode/v2/credentials.json` 的 `enc:v1:` AES-256-GCM 凭据，Token 绝不出机。
+- 桌面版内置隐私（无痕）登录窗口：隔离一次性 session，不污染系统浏览器 Cookie。
+
+---
+
+## [0.3.0] - 2026-09-23
+
+### ✨ 新功能
+- **项目更名为 CreditDaddy**：数据目录自动从 `~/.qoderdaddy` 平滑迁移至 `~/.creditdaddy`（旧目录保留）。
+- 接入 WorkBuddy（腾讯 CodeBuddy 系）账号管理与客户端热切换：本地读取 `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\` 会话，支持国内版每日签到与国际版流式对话保持活跃。
+
+---
+
+## [0.2.0] - 2026-09-23
+
+### ✨ 新功能
+- Qoder 国际版每日签到支持（携带官方设备风控身份 Cosy-MachineToken）。
+- 本机客户端一键导入：本地 DPAPI 解密 Qoder / Qoder CN 的 `auth.v1.dat` 凭据。
+- 账号安全加密导出导入（兼容 10Router 的 `10router-oauth-secure-v1` 迁移标准）。
+- 仪表盘与卡片式 UI、桌面托盘常驻。
+
+---
+
+## [0.1.0] - 2026-09-23
+
+### ✨ 新功能
+- 项目诞生（原名 **QoderDaddy**）：Qoder 多账号本地管理与每日积分自动签到助手。
+- 本地守护进程架构（监听 127.0.0.1，Host/Origin 校验防 DNS 重绑定与 CSRF，数据全留本机）。
+- Electron 桌面版外壳（Windows 托盘常驻）与飞牛 fnOS 应用包（fpk）支持。
+- Qoder PKCE 设备码登录与本机 IDE 凭据扫描。

@@ -15,7 +15,7 @@ import { productOf } from './constants.js';
 import { startUsageSyncScheduler } from './tenrouter.js';
 import { refreshContext } from './accounts.js';
 import { zcodeAutoClaim } from './zcodeAutoClaim.js';
-import { autoClaimEnabled } from './zcodeClient.js';
+import { autoClaimEnabled, warmZcodeAppVersion } from './zcodeClient.js';
 import { logger } from './logger.js';
 
 const TICK_MS = 2 * 60 * 60 * 1000;        // 2 小时
@@ -200,6 +200,7 @@ async function runTickInner(opts) {
 export function startScheduler() {
   if (timerHandle) return;
   startUsageSyncScheduler();   // 10Router 用量同步（未配置 / 未开启时不做任何事）
+  warmZcodeAppVersion();       // 后台预热 ZCode 客户端版本探测（Windows 注册表，避免首个请求同步阻塞）
   const scheduleNext = () => {
     const delay = msUntilNextTick();
     nextTickAt = new Date(Date.now() + delay).toISOString();

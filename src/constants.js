@@ -28,19 +28,21 @@ export const QUOTA_USAGE_PATH = '/api/v2/quota/usage';
 export const JOB_TOKEN_EXCHANGE_PATH = '/api/v1/jobToken/exchange';
 
 // 账号的 provider = 产品 + 区域。新增产品时在此登记，并在 providers.js 挂上对应实现。
-export const PROVIDERS = ['qoder', 'qoder-cn', 'workbuddy', 'workbuddy-intl', 'zcode'];
+export const PROVIDERS = ['qoder', 'qoder-cn', 'workbuddy', 'workbuddy-intl', 'zcode', 'mirasim'];
 export const PROVIDER_LABEL = {
   qoder: 'Qoder 国际版',
   'qoder-cn': 'Qoder 国内版',
   workbuddy: 'WorkBuddy 国内版',
   'workbuddy-intl': 'WorkBuddy 国际版',
   zcode: 'ZCode',
+  mirasim: 'mirasim',
 };
-/** provider → 产品线（qoder / workbuddy / zcode） */
+/** provider → 产品线（qoder / workbuddy / zcode / mirasim） */
 export const productOf = (provider) => {
   const p = String(provider);
   if (p.startsWith('workbuddy')) return 'workbuddy';
   if (p.startsWith('zcode')) return 'zcode';
+  if (p === 'mirasim') return 'mirasim';
   return 'qoder';
 };
 /** provider 是否国内版 */

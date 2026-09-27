@@ -21,9 +21,11 @@ import { logger } from './logger.js';
 
 const PKG = '@qoder-ai/qodercli';
 const REGISTRIES = ['https://registry.npmmirror.com', 'https://registry.npmjs.org'];
+const AUTH_REGISTRY = 'https://registry.npmjs.org';   // integrity 的权威来源（镜像只用于加速下载）
 const ELF_MACHINE = { x64: 62, arm64: 183 };
 const BUNDLE_ENTRY = 'package/bundle/qodercli.js';
 const FETCH_TIMEOUT_MS = 180_000;
+const META_TIMEOUT_MS = 15_000;
 export const CLI_RISK_ENV = { qoder: 4, 'qoder-cn': 0 };
 
 export function umidSupported(platform = process.platform, arch = process.arch) {
@@ -98,10 +100,23 @@ export function checkIntegrity(buf, integrity) {
 
 // ── 安装 ──
 
-async function fetchBuf(url) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+async function fetchBuf(url, timeoutMs = FETCH_TIMEOUT_MS) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`HTTP ${res.status}：${url}`);
   return Buffer.from(await res.arrayBuffer());
+}
+
+/**
+ * 从 npmjs 拉权威 integrity。镜像（npmmirror）的元数据与 tarball 同源，
+ * 镜像被污染时它自己的 integrity 校验形同虚设，所以校验值以 npmjs 为准；
+ * npmjs 不可达时返回 null，退回镜像自身 integrity（与旧行为一致）。
+ */
+async function authoritativeIntegrity() {
+  try {
+    const meta = JSON.parse((await fetchBuf(`${AUTH_REGISTRY}/${PKG.replace('/', '%2f')}/latest`, META_TIMEOUT_MS)).toString('utf8'));
+    if (meta?.dist?.integrity && meta?.version) return { integrity: meta.dist.integrity, version: meta.version };
+  } catch {}
+  return null;
 }
 
 function testRun(file) {
@@ -127,15 +142,21 @@ export const umidInstalling = () => Boolean(installing);
 
 async function doInstall() {
   if (!umidSupported()) throw new Error(`当前平台（${process.platform}/${process.arch}）不需要或不支持该组件`);
+  const authority = await authoritativeIntegrity();
   const errors = [];
   for (const registry of REGISTRIES) {
     try {
-      const meta = JSON.parse((await fetchBuf(`${registry}/${PKG.replace('/', '%2f')}/latest`)).toString('utf8'));
+      const meta = JSON.parse((await fetchBuf(`${registry}/${PKG.replace('/', '%2f')}/latest`, META_TIMEOUT_MS)).toString('utf8'));
       const { tarball, integrity } = meta.dist || {};
       if (!tarball || !integrity) throw new Error('包元数据缺少 tarball / integrity');
+      // 镜像版本与 npmjs 不一致时没有权威校验值可比，跳过镜像直接用官方源
+      if (authority && registry !== AUTH_REGISTRY && meta.version !== authority.version) {
+        throw new Error(`镜像版本（${meta.version}）与 npmjs（${authority.version}）不一致`);
+      }
+      const expected = authority && authority.version === meta.version ? authority.integrity : integrity;
       logger.info('UMID', `下载 ${PKG}@${meta.version}（${registry}）`);
       const tgz = await fetchBuf(tarball);
-      if (!checkIntegrity(tgz, integrity)) throw new Error('下载内容与 npm integrity 不一致');
+      if (!checkIntegrity(tgz, expected)) throw new Error('下载内容与 npm integrity 不一致');
       const bundle = tarEntry(zlib.gunzipSync(tgz), BUNDLE_ENTRY);
       if (!bundle) throw new Error(`包里没有 ${BUNDLE_ENTRY}（qodercli 结构可能变化）`);
       const elf = extractElf(bundle.toString('latin1'), ELF_MACHINE[process.arch]);

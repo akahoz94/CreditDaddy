@@ -43,6 +43,29 @@
   .title { font-family: "Avenir Next", Avenir, "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 17px; font-weight: 750; letter-spacing: -.5px; line-height: 1.15; }
   .ver { color: var(--text-3); font-size: 11px; line-height: 1.3; font-variant-numeric: tabular-nums; }
   .head-right { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 12px; }
+  /* 组件开关：右上角弹出菜单 */
+  .comp-wrap { position: relative; display: inline-flex; }
+  .comp-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 80; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--toast-shadow); padding: 10px 12px; min-width: 132px; display: flex; flex-direction: column; gap: 8px; }
+  .comp-menu[hidden] { display: none; }
+  .comp-menu-title { font-size: 11px; color: var(--text-3); }
+  .comp-menu .check { margin-right: 0; font-size: 12.5px; color: var(--text); }
+  #comp-menu { max-height: 72vh; overflow: auto; min-width: 236px; }
+  .comp-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .comp-row.off .check { opacity: .45; }
+  .comp-ops { display: inline-flex; gap: 2px; flex: none; }
+  .icon-btn.mini { width: 20px; height: 20px; border-radius: 6px; font-size: 11px; line-height: 1; padding: 0; }
+  .icon-btn.mini svg { width: 12px; height: 12px; }
+  .sort-sec { border-top: 1px dashed var(--border-subtle); padding-top: 6px; font-size: 12px; }
+  .sort-sec summary { cursor: pointer; color: var(--text-2); user-select: none; display: flex; align-items: center; gap: 6px; }
+  .sort-sec summary::-webkit-details-marker { display: none; }
+  .sort-hint { font-size: 11px; color: var(--text-3); margin: 5px 0 3px; }
+  .sort-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 0; }
+  .sort-row .sort-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .card.dragging, .tr-card.dragging { opacity: .45; }
+  .card.drop-before { box-shadow: inset 0 3px 0 0 rgb(var(--accent-rgb)); }
+  .card.drop-after { box-shadow: inset 0 -3px 0 0 rgb(var(--accent-rgb)); }
+  .tr-card.drop-before { box-shadow: inset 0 3px 0 0 rgb(var(--accent-rgb)); }
+  .tr-card.drop-after { box-shadow: inset 0 -3px 0 0 rgb(var(--accent-rgb)); }
 
   /* shell panel */
   .panel { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.03); overflow: hidden; }
@@ -193,8 +216,10 @@
   .prod-name { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .dot.qoder { background: #7c3aed; } .dot.workbuddy { background: #14b8a6; } .dot.zcode { background: #2563eb; }
-  .prod-go { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+  .prod-go { color: var(--text-3); font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; gap: 2px; }
+  .prod-go svg { width: 12px; height: 12px; transition: transform .15s; }
   .prodcard:hover .prod-go { color: var(--text); }
+  .prodcard:hover .prod-go svg { transform: translateX(2px); }
   .prod-rows { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; font-size: 12px; align-items: center; }
   .prod-rows .val { text-align: right; }
   .meter { height: 5px; background: color-mix(in srgb, var(--tertiary) 80%, transparent); border-radius: 3px; overflow: hidden; }
@@ -209,6 +234,8 @@
   .item-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-width: 0; }
   .item-time { color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .muted-empty { color: var(--text-3); font-size: 12px; padding: 16px 0 6px; text-align: center; }
+  .muted-empty .ok-glyph { display: inline-flex; vertical-align: -2px; margin-right: 4px; color: var(--ok); }
+  .muted-empty .ok-glyph svg { width: 13px; height: 13px; }
   @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prods, .dash-cols { grid-template-columns: 1fr; } }
 
   /* 10Router */
@@ -251,6 +278,9 @@
   .tr-p-val.low b { color: var(--err); }
   .tr-meter.big { height: 7px; }
   .tr-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; margin-top: 6px; }
+  .card .tr-line { margin-top: 6px; font-size: 11.5px; }
+  .card .tr-meter { margin-top: 2px; }
+  .card .mirasim-windows { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--border-subtle); }
   .tr-summary { display: flex; align-items: baseline; gap: 6px; font-size: 12px; margin-top: 6px; }
   .tr-sum-txt { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .low-text { color: var(--err); font-weight: 600; }
@@ -287,6 +317,10 @@
     </div>
     <div class="head-right">
       <span id="sched" class="num"></span>
+      <div class="comp-wrap">
+        <button class="icon-btn" id="btn-comp" title="面板设置：组件显隐与排序、账号卡片排序"></button>
+        <div class="comp-menu" id="comp-menu" hidden></div>
+      </div>
       <a class="icon-btn" id="btn-home" href="https://github.com/techysy/CreditDaddy" target="_blank" rel="noopener" title="项目主页（GitHub）"></a>
       <button class="icon-btn" id="btn-theme" title="切换亮色 / 暗色"></button>
     </div>
@@ -297,6 +331,7 @@
     <button data-view="qoder">Qoder<span class="cnt" id="cnt-qoder">0</span></button>
     <button data-view="workbuddy">WorkBuddy<span class="cnt" id="cnt-workbuddy">0</span></button>
     <button data-view="zcode">ZCode<span class="cnt" id="cnt-zcode">0</span></button>
+    <button data-view="mirasim">mirasim<span class="cnt" id="cnt-mirasim">0</span></button>
     <button data-view="tenrouter">10Router<span class="cnt" id="cnt-tenrouter">–</span></button>
   </nav>
 
@@ -498,31 +533,160 @@ const I = {
   github: svg('<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>'),
   credit: svg('<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>'),
   gift: svg('<rect x="3" y="8" width="18" height="4"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5"/>'),
+  tune: svg('<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>'),
+  chevUp: svg('<path d="M18 15l-6-6-6 6"/>'),
+  chevDown: svg('<path d="M6 9l6 6 6-6"/>'),
+  chevRight: svg('<path d="M9 18l6-6-6-6"/>'),
+  check: svg('<path d="M20 6L9 17l-5-5"/>'),
 };
 
 const $ = (id) => document.getElementById(id);
 const state = { accounts: [], quotas: {}, status: null, busy: {}, view: 'dash', region: '', addProduct: '' };
-const VIEWS = ['dash', 'qoder', 'workbuddy', 'zcode', 'tenrouter'];
+const VIEWS = ['dash', 'qoder', 'workbuddy', 'zcode', 'mirasim', 'tenrouter'];
 // 10Router 集成：config 来自 /api/tenrouter，quotas 来自 /api/tenrouter/quotas
 const tr = { config: null, quotas: null, error: null, loading: false, syncing: false };
 const PRODUCTS = [
   { id: 'qoder', label: 'Qoder' },
   { id: 'workbuddy', label: 'WorkBuddy' },
   { id: 'zcode', label: 'ZCode' },
+  { id: 'mirasim', label: 'mirasim' },
 ];
 const prodLabel = (id) => (PRODUCTS.find((x) => x.id === id) || { label: id }).label;
+
+// ── 全局组件开关：不用某个产品 / 10Router 时整块收起（偏好存浏览器本地） ──
+const COMPONENTS = [
+  { id: 'qoder', label: 'Qoder' },
+  { id: 'workbuddy', label: 'WorkBuddy' },
+  { id: 'zcode', label: 'ZCode' },
+  { id: 'mirasim', label: 'mirasim' },
+  { id: 'tenrouter', label: '10Router' },
+];
+const HIDDEN_COMP_KEY = 'qd_hidden_components';
+state.hidden = (() => {
+  const set = new Set();
+  try {
+    for (const v of JSON.parse(localStorage.getItem(HIDDEN_COMP_KEY) || '[]')) {
+      if (COMPONENTS.some((c) => c.id === v)) set.add(v);
+    }
+  } catch {}
+  return set;
+})();
+const compVisible = (id) => !state.hidden.has(id);
+function saveHiddenComps() {
+  try { localStorage.setItem(HIDDEN_COMP_KEY, JSON.stringify([...state.hidden])); } catch {}
+}
+
+// ── 排序体系 ──
+// 组件顺序：仪表盘产品卡与顶部标签栏按此顺序同步渲染（↑↓ 在右上角设置里调整）
+const COMP_ORDER_KEY = 'qd_comp_order';
+state.compOrder = (() => {
+  let arr = [];
+  try { arr = JSON.parse(localStorage.getItem(COMP_ORDER_KEY) || '[]'); } catch {}
+  const ids = COMPONENTS.map((c) => c.id);
+  arr = arr.filter((id) => ids.includes(id));
+  for (const id of ids) if (!arr.includes(id)) arr.push(id);
+  return arr;
+})();
+function saveCompOrder() {
+  try { localStorage.setItem(COMP_ORDER_KEY, JSON.stringify(state.compOrder)); } catch {}
+}
+const orderedVisibleComps = () => state.compOrder.filter(compVisible);
+
+// 产品面板账号卡：默认「剩余积分多者靠前」；手动拖拽 / 设置里上下调整的顺序优先级最高（每产品独立持久化）
+const CARD_ORDER_KEY = 'qd_card_order';
+state.cardOrder = (() => {
+  try { const o = JSON.parse(localStorage.getItem(CARD_ORDER_KEY) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; }
+})();
+function saveCardOrder() {
+  try { localStorage.setItem(CARD_ORDER_KEY, JSON.stringify(state.cardOrder)); } catch {}
+}
+// 参与排序的剩余量：无额度数据 / 查询失败的账号排最后（稳定排序保持原有次序）
+function quotaRemainForSort(a) {
+  const q = state.quotas[a.id];
+  if (!q || q.error) return -1;
+  const r = Number(q.remaining);
+  return Number.isFinite(r) ? r : -1;
+}
+function defaultCardCmp(a, b) {
+  return quotaRemainForSort(b) - quotaRemainForSort(a);
+}
+function sortedAccounts(prod, list) {
+  const manual = state.cardOrder[prod];
+  const arr = list.slice();
+  if (manual && manual.length) {
+    const idx = new Map(manual.map((id, i) => [id, i]));
+    arr.sort((x, y) => {
+      const ix = idx.has(x.id) ? idx.get(x.id) : Infinity;
+      const iy = idx.has(y.id) ? idx.get(y.id) : Infinity;
+      return ix !== iy ? ix - iy : defaultCardCmp(x, y);
+    });
+  } else {
+    arr.sort(defaultCardCmp);
+  }
+  return arr;
+}
+// 10Router 连接卡：默认启用在前、剩余额度 % 多者在前；手动拖拽（每供应商独立）优先级最高
+const TR_ORDER_KEY = 'qd_tr_order';
+state.trOrder = (() => {
+  try { const o = JSON.parse(localStorage.getItem(TR_ORDER_KEY) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; }
+})();
+function saveTrOrder() {
+  try { localStorage.setItem(TR_ORDER_KEY, JSON.stringify(state.trOrder)); } catch {}
+}
+function connPctForSort(c) {
+  if (c.error) return -1;
+  const s = splitQuotas(c);
+  const cands = [s.primary, ...s.windows].filter(Boolean).map((q) => quotaPct(q)).filter((v) => v !== null);
+  return cands.length ? Math.max(...cands) : -1;
+}
+function trBaseCmp(a, b) {
+  return ((b.isActive ? 1 : 0) - (a.isActive ? 1 : 0)) || (connPctForSort(b) - connPctForSort(a));
+}
+function sortedByManual(items, manual, baseCmp) {
+  const arr = items.slice();
+  if (manual && manual.length) {
+    const idx = new Map(manual.map((id, i) => [id, i]));
+    arr.sort((x, y) => {
+      const ix = idx.has(x.id) ? idx.get(x.id) : Infinity;
+      const iy = idx.has(y.id) ? idx.get(y.id) : Infinity;
+      return ix !== iy ? ix - iy : baseCmp(x, y);
+    });
+  } else {
+    arr.sort(baseCmp);
+  }
+  return arr;
+}
+const sortedConnections = (vendor, items) => sortedByManual(items, state.trOrder[vendor], trBaseCmp);
+// 「全部」视角的供应商汇总卡顺序：同名供应商聚合后按主额度 % 排序，手动拖拽（__vendors）优先
+function sortedVendorGroups(groups) {
+  const keyOf = (g) => g.name;
+  const withId = groups.map((g) => ({ ...g, id: keyOf(g) }));
+  const base = (a, b) => connPctForSort(b.items[0]) - connPctForSort(a.items[0]) || String(a.name).localeCompare(String(b.name));
+  return sortedByManual(withId, state.trOrder.__vendors, base);
+}
 const PROV = {
   qoder: { prod: 'qoder', prodLabel: 'Qoder', region: '国际版', cls: 'intl' },
   'qoder-cn': { prod: 'qoder', prodLabel: 'Qoder', region: '国内版', cls: 'cn' },
   workbuddy: { prod: 'workbuddy', prodLabel: 'WorkBuddy', region: '国内版', cls: 'cn' },
   'workbuddy-intl': { prod: 'workbuddy', prodLabel: 'WorkBuddy', region: '国际版', cls: 'intl' },
   zcode: { prod: 'zcode', prodLabel: 'ZCode', region: '', cls: '' },
+  mirasim: { prod: 'mirasim', prodLabel: 'mirasim', region: '', cls: '' },
 };
-// 支持每日签到的产品（ZCode 积分靠需验证码的活动领取，不做签到）
+// 支持每日签到的产品（ZCode / mirasim 额度靠活动或滚动窗口，不做签到）
 const CHECKIN_PRODUCTS = new Set(['qoder', 'workbuddy']);
-const CLIENT_LABEL = { workbuddy: 'WorkBuddy', zcode: 'ZCode' };
+const CLIENT_LABEL = { workbuddy: 'WorkBuddy', zcode: 'ZCode', mirasim: 'mirasim' };
 const provOf = (p) => PROV[p] || { prod: 'qoder', prodLabel: p, region: '', cls: '' };
-const provBadges = (p, regionOnly) => { const v = provOf(p); return (regionOnly ? '' : '<span class="badge prod ' + v.prod + '">' + esc(v.prodLabel) + '</span>') + (v.region ? '<span class="badge ' + v.cls + '">' + v.region + '</span>' : ''); };
+const provBadges = (p, regionOnly, flavor) => {
+  const v = provOf(p);
+  const zBadge = p === 'zcode' && flavor
+    ? (flavor === 'both' ? '<span class="badge intl">Z.ai</span><span class="badge cn">BigModel</span>'
+      : flavor === 'zai' ? '<span class="badge intl">Z.ai</span>'
+      : '<span class="badge cn">BigModel</span>')
+    : '';
+  return (regionOnly ? '' : '<span class="badge prod ' + v.prod + '">' + esc(v.prodLabel) + '</span>')
+    + (v.region ? '<span class="badge ' + v.cls + '">' + v.region + '</span>' : '')
+    + zBadge;
+};
 
 function esc(s) {
   return String(s === null || s === undefined ? '' : s)
@@ -642,10 +806,62 @@ function statusOf(a) {
 }
 
 function expiryCell(a) {
+  const q = state.quotas[a.id];
+  // 优先展示真实的套餐/订阅到期时间（而不是几个小时就会自动刷新的 JWT 临时 token 时间）
+  if (q && q.planExpiresAt) {
+    const msPlan = new Date(q.planExpiresAt).getTime() - Date.now();
+    const planName = q.plan ? esc(q.plan) + ' ' : '';
+    if (msPlan <= 0) return { label: planName + '已到期', warn: true, title: '套餐已到期' };
+    return {
+      label: planName + fmtTime(q.planExpiresAt).slice(0, 10),
+      warn: msPlan < 3 * 86400e3,
+      title: '套餐有效期至 ' + fmtTime(q.planExpiresAt),
+      isPlan: true,
+    };
+  }
+
+  // 具有 refreshToken 的账号会自动在后台续期，短期 exp 属于正常轮换，不应显示刺眼红字误导用户
+  if (a.hasRefreshToken) {
+    return {
+      label: '凭据有效 · 自动续期',
+      warn: false,
+      title: a.expiresAt ? '本次登录凭据有效期至 ' + fmtTime(a.expiresAt) + '（过期将自动通过 refreshToken 刷新续期，无需手动干预）' : '支持自动刷新续期',
+      isAuto: true,
+    };
+  }
+
   if (!a.expiresAt) return { label: a.isPat ? 'PAT 长期有效' : '—', warn: false };
   const ms = new Date(a.expiresAt).getTime() - Date.now();
-  if (ms <= 0) return { label: '已过期', warn: true };
-  return { label: fmtTime(a.expiresAt), warn: ms < 7 * 86400e3 };
+  if (ms <= 0) return { label: '已过期', warn: true, title: '登录凭据已过期' };
+  return { label: fmtTime(a.expiresAt), warn: ms < 48 * 3600e3, title: '有效期至 ' + fmtTime(a.expiresAt) };
+}
+
+// 通用相对重置标签：「3 天 后重置」「45 分钟 后到期」；一小时内标红，悬停看绝对时间
+function relReset(q) {
+  const at = q.resetAt || q.expiresAt;
+  if (!at) return null;
+  const ms = new Date(at).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return { text: '即将' + (q.recurring === false ? '到期' : '重置'), soon: true };
+  const m = Math.ceil(ms / 60000);
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  const dur = d > 0 ? d + ' 天' + (h ? h + ' 小时' : '') : h > 0 ? h + ' 小时' + (mm ? mm + ' 分' : '') : Math.max(1, mm) + ' 分钟';
+  return { text: dur + ' 后' + (q.recurring === false ? '到期' : '重置'), soon: ms < 3600e3 };
+}
+function relResetHtml(q) {
+  const r = relReset(q);
+  const at = q.resetAt || q.expiresAt;
+  return r ? '<span class="tr-reset' + (r.soon ? ' soon' : '') + '" title="' + esc(fmtTime(at)) + '">' + esc(r.text) + '</span>' : '';
+}
+// 三档着色水位条（≥70 绿 / ≥30 琥珀 / <30 红）
+const meterCls = (pct) => (pct >= 70 ? 'hi' : pct >= 30 ? 'mid' : 'low');
+function trMeter(pct) {
+  if (pct === null || pct === undefined) return '';
+  const w = Math.min(100, Math.max(0, pct)).toFixed(1);
+  return '<div class="tr-meter"><span class="' + meterCls(pct) + '" style="width:' + w + '%"></span></div>';
+}
+function trLine(name, valHtml, title) {
+  return '<div class="tr-line"><span class="tr-q-name"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(name) + '</span><span class="tr-q-val">' + valHtml + '</span></div>';
 }
 
 function creditHtml(a) {
@@ -653,6 +869,35 @@ function creditHtml(a) {
   if (!q) return '<div class="credit-line"><span class="dim">读取积分中…</span></div><div class="bar"></div>';
   if (q.error) return '<div class="credit-line"><span class="dim" title="' + esc(q.error) + '">积分读取失败：' + esc(q.error.slice(0, 40)) + '</span></div><div class="bar"></div>';
   if (q.empty) return '<div class="credit-line"><span class="dim">无有效套餐（仅免费额度）</span></div><div class="bar"></div>';
+
+  // 多窗口配额体系（mirasim 等）：每个窗口平等等权，独立一行带分散对齐的名称、数值与三档细水位条
+  if (a.product === 'mirasim' && q.parts && q.parts.length) {
+    const isExhausted = q.exceeded || (q.remaining <= 0);
+    const planBadge = q.plan ? '<span class="badge">' + esc(q.plan) + ' 套餐</span>' : '';
+    const expLabel = q.planExpiresAt ? '<span class="dim">' + fmtTime(q.planExpiresAt).slice(0, 10) + ' 到期</span>' : '';
+    // 状态采用温和的徽章，避免整行大红字制造恐慌
+    const topStatus = isExhausted
+      ? '<span class="pill pending">' + esc(q.bottleneckLabel || '额度已用尽') + '</span>'
+      : '<span class="lbl">可用额度</span><b>' + fmtNum(q.remaining) + '%</b>';
+
+    const fmtUnits = (n) => (n >= 10000 ? (n / 10000).toFixed(2) + '万' : fmtNum(Math.round(n)));
+    const rows = q.parts.map((p) => {
+      const pct = p.remainingPercentage ?? (p.total > 0 ? Math.max(0, Math.min(100, (p.remaining / p.total) * 100)) : 0);
+      const isZero = pct <= 0;
+      const numTxt = p.total > 0 ? fmtUnits(p.remaining) + ' / ' + fmtUnits(p.total) : '';
+      // 数值保持中性温和排版，不用鲜红大字恐吓用户
+      const pctTxt = isZero
+        ? '<span class="dim">剩 0%</span>'
+        : '<span>剩 ' + fmtNum(pct) + '%</span>';
+      const valHtml = pctTxt + (numTxt ? ' <small class="dim">(' + numTxt + ')</small>' : '') + ' ' + relResetHtml(p);
+      return trLine(p.name, valHtml) + trMeter(pct);
+    }).join('');
+
+    return '<div class="credit-line"><span class="credit">' + topStatus + '</span>'
+      + '<span class="credit dim">' + planBadge + (planBadge && expLabel ? ' · ' : '') + expLabel + '</span></div>'
+      + '<div class="mirasim-windows">' + rows + '</div>';
+  }
+
   const unit = q.unit ? ' ' + q.unit : '';
   if (q.unit) {
     const items = q.parts.map((x) => {
@@ -690,10 +935,10 @@ function cardHtml(a) {
   const ident = a.email || a.phone || (a.uid ? 'UID ' + a.uid.slice(0, 8) : a.tokenMasked);
   const isCurrent = isClientCurrent(a);
   const canCheckin = CHECKIN_PRODUCTS.has(a.product);
-  return '<div class="card" data-id="' + esc(a.id) + '">'
+  return '<div class="card" draggable="true" data-id="' + esc(a.id) + '">'
     + '<div class="row1"><div class="name-group">'
     + '<span class="name" data-act="rename" title="点击修改备注名">' + esc(a.name || '(未命名)') + '</span>'
-    + provBadges(a.provider, true)
+    + provBadges(a.provider, true, a.flavor)
     + (isCurrent ? '<span class="pill cur" title="' + esc(CLIENT_LABEL[a.product] || '') + ' 客户端当前登录的账号">客户端当前</span>' : '')
     + (a.isPat ? '<span class="badge">PAT</span>' : '')
     + (a.verified === false ? '<span class="pill fail">token 无效</span>' : '')
@@ -707,7 +952,8 @@ function cardHtml(a) {
     + '</div></div>'
     + '<div class="meta">'
     + '<div class="mi"><span class="lbl">账号</span><span class="val" title="' + esc(a.email || a.phone || a.uid || '') + '">' + esc(a.phone && !a.email ? ident : mask(ident)) + '</span></div>'
-    + '<div class="mi right"><span class="lbl">有效期至</span><span class="val' + (ex.warn ? ' warn' : '') + '">' + esc(ex.label) + '</span></div>'
+    + '<div class="mi right"><span class="lbl">' + (ex.isPlan ? '套餐到期' : ex.isAuto ? '凭据状态' : '有效期至') + '</span>'
+    + '<span class="val' + (ex.warn ? ' warn' : '') + '" title="' + esc(ex.title || '') + '">' + esc(ex.label) + '</span></div>'
     + '</div>'
     + creditHtml(a)
     + (st.msg && !(state.quotas[a.id] && state.quotas[a.id].error && state.quotas[a.id].error.includes(st.msg.slice(-24)))
@@ -718,11 +964,12 @@ function cardHtml(a) {
 const isDone = (a) => Boolean(state.status && state.status.todayDone && state.status.todayDone[a.id] === state.status.today);
 const ofProduct = (prod) => state.accounts.filter((a) => a.product === prod);
 const currentUidOf = (prod) => state.status && (prod === 'workbuddy' ? state.status.workbuddyCurrentUid : prod === 'zcode' ? state.status.zcodeCurrentUid : null);
-// 客户端当前登录判定：WorkBuddy 按 uid；ZCode 按 uid 或 email（早期导入的账号可能只存了其中一个）
+// 客户端当前登录判定：WorkBuddy / mirasim 按 uid；ZCode 按 uid 或 email（早期导入的账号可能只存了其中一个）
 function isClientCurrent(a) {
   const s = state.status;
   if (!s) return false;
   if (a.product === 'workbuddy') return Boolean(a.uid && s.workbuddyCurrentUid && s.workbuddyCurrentUid === a.uid);
+  if (a.product === 'mirasim') return Boolean(a.uid && s.mirasimCurrentUid && s.mirasimCurrentUid === a.uid);
   if (a.product === 'zcode') {
     const id = s.zcodeCurrentIdentity;
     return Boolean(id && ((a.uid && id.uid != null && String(id.uid) === String(a.uid)) || (a.email && id.email && id.email === a.email)));
@@ -754,6 +1001,7 @@ const EMPTY_TIP = {
   qoder: '还没有 Qoder 账号。<br>点「添加账号」可一键读取本机 Qoder / Qoder CN 客户端已登录的账号，或用浏览器登录。',
   workbuddy: '还没有 WorkBuddy 账号。<br>点「添加账号」可读取本机 WorkBuddy 客户端（当前 + 历史会话），或用浏览器登录 WorkBuddy / CodeBuddy 账号。',
   zcode: '还没有 ZCode 账号。<br>点「添加账号」可读取本机 ZCode 客户端已登录的账号，或用浏览器登录（BigModel / Z.ai），多个账号可一键切换。',
+  mirasim: '还没有 mirasim 账号。<br>点「添加账号」可读取本机 mirasim 客户端当前登录的账号（本地解密，token 不出本机）。',
 };
 
 function renderProd() {
@@ -762,7 +1010,7 @@ function renderProd() {
   const acc = all.filter((a) => !state.region || provOf(a.provider).cls === state.region);
   const list = $('list');
   if (!acc.length) list.innerHTML = '<div class="empty">' + (all.length ? '该地区下没有账号。' : EMPTY_TIP[prod]) + '</div>';
-  else list.innerHTML = acc.map(cardHtml).join('');
+  else list.innerHTML = sortedAccounts(prod, acc).map(cardHtml).join('');
   const canCheckin = CHECKIN_PRODUCTS.has(prod);
   $('s-count').textContent = acc.length;
   $('s-done-wrap').style.display = canCheckin ? 'contents' : 'none';
@@ -778,11 +1026,11 @@ function renderProd() {
     $('s-done').textContent = acc.filter(isDone).length + ' / ' + acc.length;
   }
   const c = creditSum(acc);
-  $('s-credits-label').textContent = prod === 'zcode' ? '有套餐' : '剩余积分';
-  $('s-credits').textContent = prod === 'zcode'
+  $('s-credits-label').textContent = prod === 'zcode' || prod === 'mirasim' ? '有效套餐' : '剩余积分';
+  $('s-credits').textContent = (prod === 'zcode' || prod === 'mirasim')
     ? acc.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && !q.empty; }).length + ' / ' + acc.length
     : c.known ? fmtNum(c.sum) : '-';
-  const hasRegions = prod !== 'zcode';
+  const hasRegions = prod !== 'zcode' && prod !== 'mirasim';
   $('region').style.display = hasRegions ? '' : 'none';
   $('region-div').style.display = hasRegions ? '' : 'none';
   document.querySelectorAll('#region button').forEach((x) => x.classList.toggle('active', x.dataset.r === state.region));
@@ -801,12 +1049,13 @@ const meter = (done, total) => '<div class="meter"><span style="width:' + (total
 function renderDash() {
   const s = state.status || {};
   const sch = s.scheduler || {};
+  const visibleProducts = PRODUCTS.filter((p) => compVisible(p.id));
   const signable = state.accounts.filter((a) => CHECKIN_PRODUCTS.has(a.product));
   const done = signable.filter(isDone).length;
   const failed = signable.filter((a) => statusOf(a).cls === 'fail').length;
   const credit = creditSum(state.accounts.filter((a) => a.product !== 'zcode'));
-  const byProd = PRODUCTS.map((p) => p.label + ' ' + ofProduct(p.id).length).join(' · ');
-  const creditByProd = ['qoder', 'workbuddy'].map((id) => { const c = creditSum(ofProduct(id)); return prodLabel(id) + ' ' + (c.known ? fmtNum(c.sum) : '-'); }).join(' · ');
+  const byProd = orderedVisibleComps().filter((id) => id !== 'tenrouter').map((id) => prodLabel(id) + ' ' + ofProduct(id).length).join(' · ');
+  const creditByProd = ['qoder', 'workbuddy'].filter(compVisible).map((id) => { const c = creditSum(ofProduct(id)); return prodLabel(id) + ' ' + (c.known ? fmtNum(c.sum) : '-'); }).join(' · ');
   // 今日进度拆「国内领取 / 国际活跃」：国际版 WorkBuddy 是保持活跃（活跃不等于必有奖励）
   const intlAcc = signable.filter((a) => a.provider === 'workbuddy-intl');
   const domAcc = signable.filter((a) => a.provider !== 'workbuddy-intl');
@@ -824,7 +1073,8 @@ function renderDash() {
     + kpi('下次自动领取', sch.ticking ? '领取中…' : sch.nextTickAt ? fmtTime(sch.nextTickAt).slice(11) : '-',
       sch.lastTick ? '上一轮 ' + fmtTime(sch.lastTick.at).slice(5) + ' · ' + esc(sch.lastTick.summary || '') : '每 ~2 小时一轮');
 
-  $('prods').innerHTML = PRODUCTS.map((p) => {
+  // 仪表盘产品卡按组件设置里的顺序渲染（与标签栏同步），10Router 汇总卡按其顺序插入
+  const prodCardHtml = (p) => {
     const list = ofProduct(p.id);
     let rows = '';
     if (!list.length) {
@@ -849,6 +1099,10 @@ function renderDash() {
       }
       rows += '<span style="grid-column:1 / -1">' + meter(d, list.length) + '</span>'
         + '<span class="lbl">剩余积分</span><span class="val">' + (c.known ? fmtNum(c.sum) : '-') + '</span>';
+    } else if (p.id === 'mirasim') {
+      const planned = list.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && !q.empty; }).length;
+      rows = '<span class="lbl">额度体系</span><span class="val dim">5h / 7d 滚动窗口</span>'
+        + '<span class="lbl">有效套餐</span><span class="val">' + planned + ' / ' + list.length + '</span>';
     } else {
       const planned = list.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && !q.empty; }).length;
       // ZCode 没有每日签到：不展示签到语义的行
@@ -863,12 +1117,18 @@ function renderDash() {
       const zid = p.id === 'zcode' ? s.zcodeCurrentIdentity : null;
       const live = cur ? esc(cur.name || cur.email || cur.uid)
         : zid && (zid.email || zid.uid || zid.username) ? '未导入的账号（' + esc(zid.email || zid.username || zid.uid) + '）'
+        : p.id === 'mirasim' && s.mirasimCurrentUid ? '未导入的账号'
         : (p.id === 'workbuddy' && s.workbuddyCurrentUid ? '未导入的账号' : '—');
       rows += '<span class="lbl">客户端当前</span><span class="val">' + live + '</span>';
     }
     return '<div class="prodcard" data-view="' + p.id + '"><div class="prod-head"><span class="prod-name"><span class="dot ' + p.id + '"></span>' + p.label
-      + '<span class="badge">' + list.length + ' 个账号</span></span><span class="prod-go">查看 →</span></div><div class="prod-rows">' + rows + '</div></div>';
-  }).join('') + trDashCard();
+      + '<span class="badge">' + list.length + ' 个账号</span></span><span class="prod-go">查看' + I.chevRight + '</span></div><div class="prod-rows">' + rows + '</div></div>';
+  };
+  $('prods').innerHTML = orderedVisibleComps().map((id) => {
+    if (id === 'tenrouter') return trDashCard();
+    const p = PRODUCTS.find((x) => x.id === id);
+    return p ? prodCardHtml(p) : '';
+  }).join('');
 
   // 需要处理：token 失效 / 即将过期、领取失败、国际版缺风控身份、10Router 额度告急 / 查询失败
   const att = [];
@@ -885,20 +1145,24 @@ function renderDash() {
     if (st.cls === 'fail') att.push(Object.assign({ pill: 'fail', text: a.provider === 'workbuddy-intl' ? '活跃失败' : '领取失败', title: st.msg }, base));
   }
   for (const c of (tr.quotas && tr.quotas.connections) || []) {
+    if (!compVisible('tenrouter')) break;
     const base = { view: 'tenrouter', name: c.name || c.email || c.providerName, badges: '<span class="badge prod tenrouter">' + esc(c.providerName) + '</span>' };
     if (c.error) att.push(Object.assign({ pill: 'fail', text: '额度查询失败', title: c.error }, base));
     else if (c.isActive && quotaLow(c)) att.push(Object.assign({ pill: 'limited', text: '额度告急' }, base));
   }
-  $('att-count').textContent = att.length ? att.length + ' 项' : '';
-  $('attention').innerHTML = att.length
-    ? att.slice(0, 8).map((x) => '<div class="item" data-view="' + x.view + '" title="' + esc(x.title || '') + '"><span class="item-main"><span class="item-name">' + esc(x.name) + '</span>' + x.badges + '</span>'
+  // 隐藏掉的组件不进「需要处理」（如收起 10Router 后不再展示其额度告急）
+  const attVisible = att.filter((x) => compVisible(x.view));
+  $('att-count').textContent = attVisible.length ? attVisible.length + ' 项' : '';
+  $('attention').innerHTML = attVisible.length
+    ? attVisible.slice(0, 8).map((x) => '<div class="item" data-view="' + x.view + '" title="' + esc(x.title || '') + '"><span class="item-main"><span class="item-name">' + esc(x.name) + '</span>' + x.badges + '</span>'
       + '<span class="item-side"><span class="pill ' + x.pill + '">' + esc(x.text) + '</span></span></div>').join('')
-      + (att.length > 8 ? '<div class="muted-empty">还有 ' + (att.length - 8) + ' 项</div>' : '')
-    : '<div class="muted-empty">' + (state.accounts.length ? '✓ 一切正常' : '还没有账号') + '</div>';
+      + (attVisible.length > 8 ? '<div class="muted-empty">还有 ' + (attVisible.length - 8) + ' 项</div>' : '')
+    : '<div class="muted-empty">' + (state.accounts.length ? '<span class="ok-glyph">' + I.check + '</span>一切正常' : '还没有账号') + '</div>';
 
   // 最近领取记录
   const RES = { 'checked-in': ['ok', '领取成功'], already: ['ok', '已领过'], limited: ['limited', '本机已领'], 'no-activity': ['pending', '无可领活动'], failed: ['fail', '失败'] };
-  const recent = state.accounts.filter((a) => a.lastResult && a.lastResult.at).sort((x, y) => String(y.lastResult.at).localeCompare(String(x.lastResult.at))).slice(0, 8);
+  const recent = state.accounts.filter((a) => a.lastResult && a.lastResult.at && compVisible(a.product))
+    .sort((x, y) => String(y.lastResult.at).localeCompare(String(x.lastResult.at))).slice(0, 8);
   $('last-tick').textContent = sch.lastTick ? '上一轮 ' + fmtTime(sch.lastTick.at).slice(5) : '';
   $('recent').innerHTML = recent.length
     ? recent.map((a) => {
@@ -926,8 +1190,13 @@ function renderStatus() {
   // 产品相关提示只在对应标签页出现
   const hasIntl = state.view === 'qoder' && state.region !== 'cn' && state.accounts.some((a) => a.provider === 'qoder');
   const n = $('notice');
-  n.classList.toggle('info', state.view === 'zcode' || (hasIntl && Boolean(s.riskIdentity)));
-  if (state.view === 'zcode') {
+  n.classList.toggle('info', state.view === 'zcode' || state.view === 'mirasim' || (hasIntl && Boolean(s.riskIdentity)));
+  if (state.view === 'mirasim') {
+    n.style.display = '';
+    n.innerHTML = 'mirasim（原生 AI 编程开发环境）额度按「平台额度」（5h 滚动窗口、7d 全局上限与分模型上限）分配。Token 约 1 小时过期，读取额度时会自动用 refreshToken 静默续期并同步回客户端，无需手动处理。'
+      + '切换账号需要至少两个已导入的账号（当前登录 + 目标账号）：先在「添加账号 → 本机导入」把各账号分别导入，切换时当前登录会自动保存、目标账号写入客户端，桌面版切完自动重启 mirasim。'
+      + mirasimClientChip(s);
+  } else if (state.view === 'zcode') {
     n.style.display = '';
     const pf = state.zProxyFirst === true;
     const pu = state.zProxyUrl;
@@ -964,6 +1233,15 @@ function zcodeClientChip(s) {
     + (canOpen ? ' <button class="btn" id="btn-zopen" style="margin-left:4px" title="打开本机 ZCode 客户端">打开客户端</button>' : '');
 }
 
+// mirasim 客户端状态芯片 + 「打开客户端」按钮
+function mirasimClientChip(s) {
+  const c = s.mirasimClient || {};
+  if (!c.installed) return ' <span class="dim">客户端：未安装</span>';
+  const canOpen = window.creditdaddy && typeof window.creditdaddy.openMirasimClient === 'function';
+  return ' <span class="dim">客户端：' + (c.running ? '运行中' : '未运行') + '</span>'
+    + (canOpen ? ' <button class="btn" id="btn-miraopen" style="margin-left:4px" title="打开本机 Mirasim 客户端">打开客户端</button>' : '');
+}
+
 // Qoder 设备身份组件（Linux / fnOS）
 const umidOffer = (s) => Boolean(s && s.umid && s.umid.supported && !s.umid.installed);
 let umidBusy = false;
@@ -983,6 +1261,14 @@ $('notice').addEventListener('click', async (e) => {
       const r = await window.creditdaddy.openZcodeClient();
       if (r && r.ok) toast('已启动 ZCode 客户端');
       else toast((r && r.error) || '无法打开 ZCode 客户端', false);
+    } catch (err) { toast(String(err && err.message || err), false); }
+    return;
+  }
+  if (e.target.closest('#btn-miraopen')) {
+    try {
+      const r = await window.creditdaddy.openMirasimClient();
+      if (r && r.ok) toast('已启动 Mirasim 客户端');
+      else toast((r && r.error) || '无法打开 Mirasim 客户端', false);
     } catch (err) { toast(String(err && err.message || err), false); }
     return;
   }
@@ -1062,37 +1348,11 @@ function quotaValue(q) {
 }
 const resetLabel = (q) => (q.resetAt ? fmtTime(q.resetAt).slice(5) + (q.recurring === false ? ' 到期' : ' 重置') : '');
 
-// 相对重置标签（CLIProxyAPI 管理中心风格）：「3 天 后重置」「45 分钟 后到期」；一小时内标红，悬停看绝对时间
-function relReset(q) {
-  if (!q.resetAt) return null;
-  const ms = new Date(q.resetAt).getTime() - Date.now();
-  if (!Number.isFinite(ms)) return null;
-  if (ms <= 0) return { text: '即将' + (q.recurring === false ? '到期' : '重置'), soon: true };
-  const m = Math.ceil(ms / 60000);
-  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
-  const dur = d > 0 ? d + ' 天' + (h ? h + ' 小时' : '') : h > 0 ? h + ' 小时' + (mm ? mm + ' 分' : '') : Math.max(1, mm) + ' 分钟';
-  return { text: dur + ' 后' + (q.recurring === false ? '到期' : '重置'), soon: ms < 3600e3 };
-}
-function relResetHtml(q) {
-  const r = relReset(q);
-  return r ? '<span class="tr-reset' + (r.soon ? ' soon' : '') + '" title="' + esc(fmtTime(q.resetAt)) + '">' + esc(r.text) + '</span>' : '';
-}
-// 三档着色水位条（≥70 绿 / ≥30 琥珀 / <30 红）
-const meterCls = (pct) => (pct >= 70 ? 'hi' : pct >= 30 ? 'mid' : 'low');
-function trMeter(pct) {
-  if (pct === null) return '';
-  const w = Math.min(100, Math.max(0, pct)).toFixed(1);
-  return '<div class="tr-meter"><span class="' + meterCls(pct) + '" style="width:' + w + '%"></span></div>';
-}
 // 明细整行：名称 + 数值/相对重置 + 水位条（CLIProxyAPI quotaRow 版式）
 function trRow(q) {
   return trLine(q.name, lineVal(q)) + trMeter(quotaPct(q));
 }
 
-// 紧凑行（周期额度 / 聚合积分包）：名称在左、数值在右，不带进度条
-function trLine(name, valHtml, title) {
-  return '<div class="tr-line"><span class="tr-q-name"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(name) + '</span><span class="tr-q-val">' + valHtml + '</span></div>';
-}
 function lineVal(q) {
   const pct = quotaPct(q);
   // 百分比口径（限时限额额度）：一律显示 %，节约空间；积分类保持实际数字
@@ -1181,7 +1441,7 @@ function trCardHtml(c) {
         + trPacksHtml(c, packs);
     }
   }
-  return '<div class="tr-card' + (c.isActive ? '' : ' off') + '"><div class="row1"><div class="name-group">'
+  return '<div class="tr-card' + (c.isActive ? '' : ' off') + '" draggable="true" data-id="' + esc(c.id) + '" data-vendor="' + esc(c.providerName || c.provider || '') + '"><div class="row1"><div class="name-group">'
     + '<span class="badge prod tenrouter">' + esc(c.providerName) + '</span>'
     + (TR_REGION[c.provider] ? '<span class="badge ' + TR_REGION[c.provider][1] + '">' + TR_REGION[c.provider][0] + '</span>' : '')
     + '<span class="tr-name" title="' + esc([c.name, c.email].filter(Boolean).join(' · ')) + '">' + esc(who) + '</span>'
@@ -1307,7 +1567,7 @@ function trVendorCardHtml(g) {
         ? '<div class="tr-summary dim"><span class="tr-sum-txt">' + briefs.join(' · ') + '</span></div>'
         : '');
   }
-  return '<div class="tr-card"><div class="row1"><div class="name-group">'
+  return '<div class="tr-card" draggable="true" data-vendor="' + esc(g.name) + '"><div class="row1"><div class="name-group">'
     + '<span class="badge prod tenrouter">' + esc(g.name) + '</span>'
     + (TR_REGION[prov] ? '<span class="badge ' + TR_REGION[prov][1] + '">' + TR_REGION[prov][0] + '</span>' : '')
     + '<span class="badge">' + items.length + ' 个账号</span>'
@@ -1367,10 +1627,10 @@ function renderTenrouter() {
   else if (!list.length) grid = '<div class="empty">10Router 里还没有可查额度的供应商连接（OAuth 或支持额度查询的 API Key）。</div>';
   else if (activeVendor) {
     const g = groups.find((x) => x.name === activeVendor) || { items: [] };
-    grid = '<div class="tr-vcards">' + g.items.map(trCardHtml).join('') + '</div>';
+    grid = '<div class="tr-vcards">' + sortedConnections(activeVendor, g.items).map(trCardHtml).join('') + '</div>';
   } else {
     grid = shown.length
-      ? '<div class="tr-vcards">' + shown.map(trVendorCardHtml).join('') + '</div>'
+      ? '<div class="tr-vcards">' + sortedVendorGroups(shown).map(trVendorCardHtml).join('') + '</div>'
       : '<div class="empty">没有可显示的供应商（可在「设置」里关掉隐藏）</div>';
   }
   const h = tr.health;
@@ -1407,7 +1667,7 @@ function trDashCard() {
     + '<span class="lbl">额度告急</span><span class="val' + (low ? ' warn' : '') + '">' + (tr.quotas ? low : '-') + '</span>'
     + '<span class="lbl">用量同步</span><span class="val">' + (ls ? esc(fmtTime(ls.at).slice(5)) : c.sync.enabled ? '等待首次同步' : '手动') + '</span>';
   return '<div class="prodcard" data-view="tenrouter"><div class="prod-head"><span class="prod-name"><span class="dot tenrouter"></span>10Router</span>'
-    + '<span class="prod-go">查看 →</span></div><div class="prod-rows">' + rows + '</div></div>';
+    + '<span class="prod-go">查看' + I.chevRight + '</span></div><div class="prod-rows">' + rows + '</div></div>';
 }
 
 async function loadTrConfig() {
@@ -1577,19 +1837,40 @@ async function onCardClick(e) {
     const client = CLIENT_LABEL[a && a.product] || '客户端';
     const tip = a && a.product === 'zcode'
       ? '\n需先退出 ZCode；切换后重新打开 ZCode 即为新账号。当前登录会先保存到 CreditDaddy，不会丢号。'
-      : '\n客户端会自动应用新会话；当前登录账号的最新 token 会先保存到 CreditDaddy。';
+      : a && a.product === 'mirasim'
+        ? '\n需先退出 Mirasim；切换后重新打开即为新账号。当前登录会先保存到 CreditDaddy，不会丢号。'
+        : '\n客户端会自动应用新会话；当前登录账号的最新 token 会先保存到 CreditDaddy。';
     if (!(await uiConfirm('把 ' + client + ' 切换到「' + (a && a.name || id) + '」？' + tip, '切换账号', '切换'))) return;
     const doSwitch = (force) => api('/api/accounts/' + encodeURIComponent(id) + '/switch', { json: { force } });
     try {
       let r;
       try { r = await doSwitch(false); }
       catch (err) {
-        if (err.code !== 'ZCODE_RUNNING') throw err;
-        if (!(await uiConfirm(err.message + '\n\n仍要强制切换吗？强制切换会先关闭 ZCode 客户端再写入登录（未保存的对话内容可能丢失），重新打开 ZCode 即为新账号。', 'ZCode 正在运行', '关闭并强制切换'))) return;
+        if (err.code !== 'ZCODE_RUNNING' && err.code !== 'MIRASIM_RUNNING') throw err;
+        if (!(await uiConfirm(err.message + '\n\n仍要强制切换吗？强制切换会先关闭客户端再写入登录，重新打开客户端即为新账号。', client + ' 正在运行', '关闭并强制切换'))) return;
         r = await doSwitch(true);
       }
-      toast(r && r.alreadyActive ? client + ' 当前已是该账号' : (r && r.closedClient ? '已关闭 ZCode，' : '') + client + ' 已切换到 ' + (a && a.name || id));
+      const msg = r && r.alreadyActive ? client + ' 当前已是该账号'
+        : (r && r.closedClient ? '已关闭并切换 ' : '') + client + ' 已切换到 ' + (a && a.name || id);
+      toast(msg);
       await loadStatus(); await loadAccounts();
+      // 桌面版切号后自动唤醒打开客户端，免去手动查找客户端快捷方式
+      if (a && a.product === 'zcode' && window.creditdaddy && typeof window.creditdaddy.openZcodeClient === 'function') {
+        setTimeout(async () => {
+          try {
+            const re = await window.creditdaddy.openZcodeClient();
+            if (re && re.ok) toast('已重新启动 ZCode 客户端');
+          } catch (e) {}
+        }, 800);
+      }
+      if (a && a.product === 'mirasim' && window.creditdaddy && typeof window.creditdaddy.openMirasimClient === 'function') {
+        setTimeout(async () => {
+          try {
+            const re = await window.creditdaddy.openMirasimClient();
+            if (re && re.ok) toast('已重新启动 Mirasim 客户端');
+          } catch (e) {}
+        }, 800);
+      }
     } catch (err) { toast(err.message, false); }
     return;
   }
@@ -1800,14 +2081,15 @@ function switchTab(name) {
 
 // 添加账号：在产品页打开时只显示该产品可用的方式
 const LOCAL_HINT = {
-  '': '读取本机 Qoder 客户端（本地解密）、WorkBuddy 客户端（当前 + 历史会话）、ZCode 客户端（本地解密）已登录的账号，token 不出本机；同时扫描旧版 Qoder IDE / CLI 文件。',
+  '': '读取本机 Qoder 客户端（本地解密）、WorkBuddy 客户端（当前 + 历史会话）、ZCode 客户端（本地解密）、mirasim 客户端（本地解密）已登录的账号，token 不出本机；同时扫描旧版 Qoder IDE / CLI 文件。',
   qoder: '读取本机 Qoder / Qoder CN 客户端已登录的账号（本地解密 auth.v1.dat），token 不出本机；同时扫描旧版 Qoder IDE / CLI 文件。',
   workbuddy: '读取本机 WorkBuddy 客户端的当前会话与历史会话（CodeBuddyExtension 凭据目录），token 不出本机。',
   zcode: '读取本机 ZCode 客户端当前登录的账号（本地解密 ~/.zcode/v2/credentials.json），token 不出本机。',
+  mirasim: '读取本机 mirasim 客户端当前登录的账号（本地解密 ~/.mirasim/setting.json），token 不出本机。',
 };
 function openAdd(product) {
   state.addProduct = product || '';
-  const tabShown = { local: true, device: true, token: product !== 'zcode' };
+  const tabShown = { local: true, device: product !== 'mirasim', token: product !== 'zcode' && product !== 'mirasim' };
   document.querySelectorAll('#m-add .tab').forEach((t) => { t.style.display = tabShown[t.dataset.tab] ? '' : 'none'; });
   $('local-hint').textContent = LOCAL_HINT[state.addProduct];
   let first = null;
@@ -1855,9 +2137,9 @@ async function localScan() {
     }
     for (const e of r.errors || []) html += '<div class="hint" style="color:var(--err)">读取失败：' + esc(e.file) + '：' + esc(e.error) + '</div>';
     if (!cands.length) {
-      const where = state.addProduct ? prodLabel(state.addProduct) : 'Qoder / WorkBuddy / ZCode';
-      const alt = state.addProduct === 'zcode' ? '，或改用「浏览器登录」' : '，或改用「浏览器登录」「粘贴 Token」';
-      html += '<div class="hint">未发现已登录的 ' + where + ' 账号。请先在客户端登录' + alt + '。<br>已检查：Qoder / Qoder CN 客户端数据目录、WorkBuddy 凭据目录、ZCode 数据目录'
+      const where = state.addProduct ? prodLabel(state.addProduct) : 'Qoder / WorkBuddy / ZCode / mirasim';
+      const alt = state.addProduct === 'zcode' || state.addProduct === 'mirasim' ? '' : '，或改用「浏览器登录」「粘贴 Token」';
+      html += '<div class="hint">未发现已登录的 ' + where + ' 账号。请先在客户端登录' + alt + '。<br>已检查：Qoder / Qoder CN 客户端数据目录、WorkBuddy 凭据目录、ZCode 数据目录、mirasim 数据目录'
         + (r.scannedDirs && r.scannedDirs.length ? '、' + r.scannedDirs.map(esc).join('、') : '') + '</div>';
     }
     box.innerHTML = html;
@@ -1999,6 +2281,219 @@ async function submitImport(password) {
 }
 
 // ── 绑定 ──
+// 全局组件开关：收起 Qoder / WorkBuddy / ZCode / 10Router 的标签页与仪表盘对应卡片
+$('btn-comp').innerHTML = I.tune;
+
+// ── 卡片拖拽排序（产品面板 + 10Router）：手动顺序优先级最高，落库 localStorage ──
+const dragState = { kind: null, id: null, vendor: null };
+function clearDropMarkers(root) {
+  root.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+}
+/** 把 dragId 移到 targetId 的 before/after 位置；manual 为空时以当前默认顺序为底表 */
+function moveInManual(orderMap, key, baseIds, dragId, targetId, before) {
+  const arr = (orderMap[key] && orderMap[key].length ? orderMap[key].slice() : baseIds.slice()).filter((id) => id !== dragId);
+  const ti = arr.indexOf(targetId);
+  arr.splice(ti < 0 ? arr.length : (before ? ti : ti + 1), 0, dragId);
+  orderMap[key] = arr;
+}
+function bindCardDrag(container, { kind, onReorder }) {
+  if (!container) return;
+  container.addEventListener('dragstart', (e) => {
+    const card = e.target.closest && e.target.closest('.card, .tr-card');
+    if (!card) return;
+    dragState.kind = kind;
+    dragState.id = card.dataset.id || null;
+    dragState.vendor = card.dataset.vendor || null;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', dragState.id || dragState.vendor || ''); } catch {}
+  });
+  container.addEventListener('dragend', (e) => {
+    const card = e.target.closest && e.target.closest('.card, .tr-card');
+    if (card) card.classList.remove('dragging');
+    clearDropMarkers(container);
+    dragState.kind = null; dragState.id = null; dragState.vendor = null;
+  });
+  container.addEventListener('dragover', (e) => {
+    if (dragState.kind !== kind) return;
+    const over = e.target.closest && e.target.closest('.card, .tr-card');
+    if (!over) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    clearDropMarkers(container);
+    if ((over.dataset.id || null) === dragState.id) return;
+    const rect = over.getBoundingClientRect();
+    over.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drop-before' : 'drop-after');
+  });
+  container.addEventListener('drop', (e) => {
+    if (dragState.kind !== kind) return;
+    const over = e.target.closest && e.target.closest('.card, .tr-card');
+    if (!over) return;
+    e.preventDefault();
+    const before = over.classList.contains('drop-before');
+    clearDropMarkers(container);
+    const targetId = over.dataset.id || null;
+    if (!targetId || targetId === dragState.id) return;
+    onReorder(dragState, targetId, before);
+  });
+}
+// 产品面板：拖拽账号卡 → state.cardOrder[prod]
+bindCardDrag($('list'), {
+  kind: 'card',
+  onReorder: (d, targetId, before) => {
+    const prod = state.view;
+    if (!PRODUCTS.some((p) => p.id === prod)) return;
+    const baseIds = sortedAccounts(prod, ofProduct(prod)).map((a) => a.id);
+    moveInManual(state.cardOrder, prod, baseIds, d.id, targetId, before);
+    saveCardOrder();
+    render();
+    renderCompMenu();
+  },
+});
+// 10Router：拖拽连接卡（单供应商视角按该供应商存序）与供应商汇总卡（全部视角存 __vendors）
+bindCardDrag($('tr-panel'), {
+  kind: 'tr',
+  onReorder: (d, targetId, before) => {
+    if (!tr.quotas) return;
+    const list = (tr.quotas.connections || []);
+    const groups = trGroups(list);
+    if (d.id) {
+      // 连接卡：vendor 取自卡片或当前视图
+      const vendor = d.vendor || state.trVendor || (groups.find((g) => g.items.some((x) => x.id === d.id)) || {}).name;
+      if (!vendor) return;
+      const g = groups.find((x) => x.name === vendor);
+      if (!g) return;
+      const baseIds = sortedConnections(vendor, g.items).map((c) => c.id);
+      moveInManual(state.trOrder, vendor, baseIds, d.id, targetId, before);
+    } else if (d.vendor) {
+      // 供应商汇总卡
+      const baseIds = sortedVendorGroups(groups).map((g) => g.name);
+      moveInManual(state.trOrder, '__vendors', baseIds, d.vendor, targetId, before);
+    } else return;
+    saveTrOrder();
+    renderTenrouter();
+  },
+});
+
+function syncCompMenu() { renderCompMenu(); }
+function applyComponents() {
+  // 标签栏按组件设置里的顺序重排（仪表盘按钮始终最前）
+  const nav = $('nav');
+  for (const id of state.compOrder) {
+    const btn = nav.querySelector('button[data-view="' + id + '"]');
+    if (btn) nav.appendChild(btn);
+  }
+  for (const c of COMPONENTS) {
+    const btn = document.querySelector('#nav button[data-view="' + c.id + '"]');
+    if (btn) btn.style.display = compVisible(c.id) ? '' : 'none';
+  }
+  if (state.view !== 'dash' && !compVisible(state.view)) {
+    history.replaceState(null, '', location.pathname + location.search);
+    applyView();
+    return;   // applyView 内部已 render + renderStatus
+  }
+  render();
+  renderStatus();
+}
+
+// 右上角面板设置：组件显隐 + 组件顺序（↑↓，仪表盘与标签栏同步）+ 每产品账号排序（默认积分多者靠前，可手动固定）
+function renderCompMenu() {
+  const compRows = state.compOrder.map((id) => {
+    const c = COMPONENTS.find((x) => x.id === id);
+    if (!c) return '';
+    const vis = compVisible(id);
+    return '<div class="comp-row' + (vis ? '' : ' off') + '">'
+      + '<label class="check"><input type="checkbox" data-comp="' + id + '"' + (vis ? ' checked' : '') + '>' + esc(c.label) + '</label>'
+      + '<span class="comp-ops">'
+      + '<button class="icon-btn mini" data-move="up" data-comp="' + id + '" title="上移（仪表盘与标签栏同步）">' + I.chevUp + '</button>'
+      + '<button class="icon-btn mini" data-move="down" data-comp="' + id + '" title="下移（仪表盘与标签栏同步）">' + I.chevDown + '</button>'
+      + '</span></div>';
+  }).join('');
+  const sortSections = PRODUCTS.filter((p) => compVisible(p.id) && ofProduct(p.id).length).map((p) => {
+    const manual = state.cardOrder[p.id];
+    const rows = sortedAccounts(p.id, ofProduct(p.id)).map((a) => '<div class="sort-row" data-aid="' + esc(a.id) + '">'
+      + '<span class="sort-name" title="' + esc(a.name || a.email || a.uid || a.id) + '">' + esc(a.name || a.email || ('#' + a.id.slice(0, 6))) + '</span>'
+      + '<span class="comp-ops">'
+      + '<button class="icon-btn mini" data-acc-move="up" data-prod="' + p.id + '" data-aid="' + esc(a.id) + '" title="上移">' + I.chevUp + '</button>'
+      + '<button class="icon-btn mini" data-acc-move="down" data-prod="' + p.id + '" data-aid="' + esc(a.id) + '" title="下移">' + I.chevDown + '</button>'
+      + '</span></div>').join('');
+    return '<details class="sort-sec"' + (manual && manual.length ? ' open' : '') + '><summary>' + esc(p.label)
+      + (manual && manual.length ? ' <span class="badge">手动排序</span>' : '')
+      + '<span class="dim" style="font-size:11px">' + ofProduct(p.id).length + '</span></summary>'
+      + '<div class="sort-hint">默认按剩余积分从多到少；拖拽卡片或用上下按钮固定顺序。</div>'
+      + rows
+      + (manual && manual.length ? '<button class="btn" data-acc-reset="' + p.id + '" style="margin-top:6px;width:100%">恢复默认排序</button>' : '')
+      + '</details>';
+  }).join('');
+  $('comp-menu').innerHTML = '<div class="comp-menu-title">组件顺序（仪表盘与标签栏同步）</div>' + compRows
+    + '<div class="comp-menu-title" style="margin-top:2px">账号卡片排序</div>'
+    + (sortSections || '<div class="sort-hint">暂无账号</div>');
+}
+
+/** 在手动排序列表里移动一个 id；列表不存在时先按当前生效顺序物化一份 */
+function moveAccountId(prod, aid, dir) {
+  const baseIds = sortedAccounts(prod, ofProduct(prod)).map((a) => a.id);
+  const arr = (state.cardOrder[prod] && state.cardOrder[prod].length ? state.cardOrder[prod].slice() : baseIds);
+  const i = arr.indexOf(aid);
+  if (i < 0) return;
+  const j = dir === 'up' ? i - 1 : i + 1;
+  if (j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  state.cardOrder[prod] = arr;
+  saveCardOrder();
+}
+$('btn-comp').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const m = $('comp-menu');
+  if (m.hidden) renderCompMenu();
+  m.hidden = !m.hidden;
+});
+document.addEventListener('click', (e) => {
+  const m = $('comp-menu');
+  if (!m.hidden && !e.target.closest('.comp-wrap')) m.hidden = true;
+});
+$('comp-menu').addEventListener('change', (e) => {
+  const c = e.target.dataset && e.target.dataset.comp;
+  if (!c) return;
+  if (e.target.checked) state.hidden.delete(c); else state.hidden.add(c);
+  saveHiddenComps();
+  applyComponents();
+  renderCompMenu();
+});
+$('comp-menu').addEventListener('click', (e) => {
+  const move = e.target.closest && e.target.closest('[data-move]');
+  if (move) {
+    e.stopPropagation();
+    const id = move.dataset.comp;
+    const i = state.compOrder.indexOf(id);
+    const j = move.dataset.move === 'up' ? i - 1 : i + 1;
+    if (i < 0 || j < 0 || j >= state.compOrder.length) return;
+    [state.compOrder[i], state.compOrder[j]] = [state.compOrder[j], state.compOrder[i]];
+    saveCompOrder();
+    applyComponents();
+    renderCompMenu();
+    return;
+  }
+  const accMove = e.target.closest && e.target.closest('[data-acc-move]');
+  if (accMove) {
+    e.stopPropagation();
+    moveAccountId(accMove.dataset.prod, accMove.dataset.aid, accMove.dataset.accMove);
+    render();
+    renderCompMenu();
+    return;
+  }
+  const reset = e.target.closest && e.target.closest('[data-acc-reset]');
+  if (reset) {
+    e.stopPropagation();
+    delete state.cardOrder[reset.dataset.accReset];
+    saveCardOrder();
+    render();
+    renderCompMenu();
+  }
+});
+applyComponents();
+renderCompMenu();
+
 $('btn-checkin-all').innerHTML = I.play + '全部领取';
 for (const id of ['btn-add', 'btn-add-dash']) $(id).innerHTML = I.plus + '添加账号';
 for (const id of ['btn-import', 'btn-import-dash']) { $(id).innerHTML = I.upload + '导入'; $(id).onclick = pickImport; }
@@ -2024,6 +2519,8 @@ function applyView() {
   const raw = location.hash.slice(1);
   const [v, sub] = raw.split('/');
   state.view = VIEWS.includes(v) ? v : 'dash';
+  // 被组件开关收起的页面回仪表盘
+  if (state.view !== 'dash' && !compVisible(state.view)) state.view = 'dash';
   state.region = '';
   // 10Router 供应商标签可用 hash 直达：#tenrouter/<供应商名>
   state.trVendor = state.view === 'tenrouter' && sub ? decodeURIComponent(sub) : '';
