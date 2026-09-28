@@ -1846,8 +1846,10 @@ async function loadAccounts() {
   loadQuotas();
 }
 let quotaRun = 0;
+let quotaLoadedAt = 0;
 async function loadQuotas(ids) {
   const run = ++quotaRun;
+  quotaLoadedAt = Date.now();
   const queue = (ids || state.accounts.map((a) => a.id)).slice();
   if (ids) for (const id of ids) delete state.quotas[id];
   const worker = async () => {
@@ -2708,6 +2710,11 @@ applyView();
     loadZNet();
     loadTrConfig().then(() => loadTrQuotas());
     setInterval(() => loadTrQuotas(), 5 * 60 * 1000);
+    // 账号余额（ZCode 剩余 token 等）自动刷新：可见时每 2 分钟一轮；从托盘/后台切回时若超过 1 分钟没刷过立即补一轮
+    setInterval(() => { if (!document.hidden) loadQuotas(); }, 2 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && Date.now() - quotaLoadedAt > 60 * 1000) loadQuotas();
+    });
     loadLogs();
     setInterval(loadLogs, 10000);
     setInterval(async () => { await loadStatus(); render(); }, 30000);
