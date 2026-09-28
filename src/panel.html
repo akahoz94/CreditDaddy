@@ -2242,7 +2242,17 @@ async function localScan() {
         : '<button class="btn" data-cid="' + esc(c.id) + '" data-prov="qoder">导入·国际</button><button class="btn" data-cid="' + esc(c.id) + '" data-prov="qoder-cn">导入·国内</button>';
       html += '<div class="cand"><div class="cand-main"><div class="cand-name">' + title + prov + '</div><div class="cand-sub">' + sub + '</div></div><div class="row">' + btns + '</div></div>';
     }
-    for (const e of r.errors || []) html += '<div class="hint" style="color:var(--err)">读取失败：' + esc(e.file) + '：' + esc(e.error) + '</div>';
+    for (const e of r.errors || []) {
+      // Mirasim 特定错误的友好提示
+      const hint = e.file.includes('setting.json')
+        ? (e.error.includes('secret.key')
+          ? '未找到 secret.key（可能是进程内缓存密钥但磁盘被删），请完全退出 Mirasim 后重启'
+          : e.error.includes('解密凭据失败')
+            ? '密钥存在但解密失败（版本不兼容 / 密钥损坏），尝试完全退出 Mirasim 后重启'
+            : e.error)
+        : e.error;
+      html += '<div class="hint" style="color:var(--err)">读取失败：' + esc(e.file) + '：' + esc(hint) + '</div>';
+    }
     if (!cands.length) {
       const where = state.addProduct ? prodLabel(state.addProduct) : 'Qoder / WorkBuddy / ZCode / mirasim / 妙手';
       const alt = state.addProduct === 'zcode' || state.addProduct === 'mirasim' || state.addProduct === 'catpaw' ? '' : '，或改用「浏览器登录」「粘贴 Token」';

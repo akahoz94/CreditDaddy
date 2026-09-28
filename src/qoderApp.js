@@ -40,16 +40,24 @@ function candidateResourceDirs(v) {
     return [
       path.join(local, 'Programs', v.installName, 'resources'),
       path.join(pf, v.installName, 'resources'),
+      // AppX 风格（微软商店版 / MSIX）：Qoder_*.msix 通常在 Start Menu 快捷方式指向的位置
+      path.join(local, 'Microsoft', 'WindowsApps', v.installName),
+      path.join(local, 'npm-cache', 'electron', 'bin', 'node.exe'),   // npm 全局安装可能放在这里
+      // Squirrel 更新目录：Electron 应用的临时升级包
+      path.join(local, 'electron', 'updates', v.installName),
     ];
   }
   if (process.platform === 'darwin') {
     return [
       `/Applications/${v.installName}.app/Contents/Resources`,
       path.join(home, 'Applications', `${v.installName}.app`, 'Contents', 'Resources'),
+      // 可能是 qodercn.app 或 qoder.app
+      `/Applications/Qoder.app/Contents/Resources`,
+      `/Applications/Qoder\\ CN.app/Contents/Resources`,
     ];
   }
   const slug = v.installName.toLowerCase().replace(/\s+/g, '-');
-  return [`/opt/${v.installName}/resources`, `/opt/${slug}/resources`, `/usr/lib/${slug}/resources`];
+  return [`/opt/${v.installName}/resources`, `/opt/${slug}/resources`, `/usr/lib/${slug}/resources`, '/snap/qoder/current/resources'];
 }
 
 function userDataDir(v) {

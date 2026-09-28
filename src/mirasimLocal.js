@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFile, execSync } from 'node:child_process';
+import { execFile, execFileSync, execSync } from 'node:child_process';
 
 const ENC_PREFIX = 'mrs1:';
 
@@ -53,6 +53,34 @@ function atomicWriteJson(file, obj) {
 
 let masterKeyCache = null;
 
+function persistMasterKey(paths, key) {
+  try {
+    fs.mkdirSync(paths.home, { recursive: true, mode: 0o700 });
+    if (process.platform === 'win32') {
+      const script = 'Add-Type -AssemblyName System.Security;'
+        + '$b=[Convert]::FromBase64String([Console]::In.ReadToEnd());'
+        + "[Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect($b,$null,'CurrentUser'))";
+      const encoded = Buffer.from(script, 'utf16le').toString('base64');
+      const encrypted = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+        input: Buffer.from(key.toString('hex'), 'utf16le').toString('base64'), windowsHide: true, timeout: 15_000, encoding: 'utf8',
+      }).trim();
+      fs.writeFileSync(paths.secretKey, Buffer.from(encrypted, 'base64').toString('hex'), { mode: 0o600 });
+    } else {
+      fs.writeFileSync(paths.secretKey, key.toString('hex'), { mode: 0o600 });
+    }
+    return true;
+  } catch { return false; }
+}
+
+function readEnvironmentMasterKey() {
+  const value = process.env.MIRASIM_SECRET_KEY || process.env.MIRASIM_APP_SECRET_KEY;
+  if (!value) return null;
+  const hex = value.trim();
+  if (!/^[0-9a-f]{64}$/i.test(hex)) return null;
+  masterKeyCache = Buffer.from(hex, 'hex');
+  return masterKeyCache;
+}
+
 function dpapiUnprotect(buf) {
   const script = 'Add-Type -AssemblyName System.Security;'
     + '$b=[Convert]::FromBase64String([Console]::In.ReadToEnd());'
@@ -71,9 +99,14 @@ function dpapiUnprotect(buf) {
 
 /** 取得解开后的 32 字节 master key Buffer（未配置或解密失败返回 null） */
 export async function getMasterKey() {
-  if (masterKeyCache) return masterKeyCache;
   const p = mirasimPaths();
-  if (!fs.existsSync(p.secretKey)) return null;
+  // 客户端可能在进程内沿用已缓存的密钥：磁盘文件被删除时，仍可用缓存解密，
+  // 并将密钥原样写回，修复「setting.json 是 mrs1:、secret.key 缺失」的状态。
+  if (masterKeyCache) {
+    if (!fs.existsSync(p.secretKey)) persistMasterKey(p, masterKeyCache);
+    return masterKeyCache;
+  }
+  if (!fs.existsSync(p.secretKey)) return readEnvironmentMasterKey();
 
   try {
     const raw = fs.readFileSync(p.secretKey, 'utf8').trim();
@@ -196,15 +229,27 @@ export async function liveToAccount() {
   const p = mirasimPaths();
   const s = readJson(p.setting);
   if (!s || !s.auth || !s.auth.token) return null;
+
   const key = await getMasterKey();
   let token = s.auth.token;
   let refreshToken = s.auth.refreshToken;
   if (isEncrypted(token)) {
-    if (!key) return null; // 无法解密
+    if (!key) {
+      // 明确区分「密钥缺失」和「解密失败」两种状态，方便用户理解并设置环境变量
+      const envName = process.platform === 'win32' ? 'MIRASIM_SECRET_KEY' : 'MIRASIM_APP_SECRET_KEY';
+      const hint = `未找到 ${p.secretKey}，请先完整重启 Mirasim 客户端生成；或临时设置环境变量 ${envName} 绕过`;
+      const err = new Error(hint);
+      err.code = 'MISSING_SECRET_KEY';
+      throw err;
+    }
     try {
       token = decryptWithKey(token, key);
       refreshToken = refreshToken ? decryptWithKey(refreshToken, key) : null;
-    } catch { return null; }
+    } catch (e) {
+      const err = new Error(`解密凭据失败：${e.message}`);
+      err.code = 'DECRYPT_FAILED';
+      throw err;
+    }
   }
 
   const userId = s.auth.userId || (token.includes('.') ? (() => {
