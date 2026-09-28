@@ -20,12 +20,24 @@ const QUOTA_TIMEOUT_MS = 90_000;   // 10Router 端并发查询全部供应商，
 const IMPORT_TIMEOUT_MS = 120_000;
 const BATCH = 5000;
 const SYNC_INTERVAL_MS = 60 * 60 * 1000;
-const DEFAULT_CONFIG = { endpoint: '', key: '', adminPassword: '', sync: { enabled: false, sources: [...SOURCES] }, syncState: {}, lastSync: null };
+const DEFAULT_CONFIG = { endpoint: '', key: '', adminPassword: '', sync: { enabled: false, sources: [...SOURCES], sourcesVersion: 2 }, syncState: {}, lastSync: null };
+// v0.9.6 及更早保存的来源全集；版本迁移只补「此后新增」的来源，不复活用户手动关掉的
+const LEGACY_SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo'];
+const SOURCES_VERSION = 2;
 
 export function loadConfig() {
   try {
     const c = JSON.parse(fs.readFileSync(FILE(), 'utf8'));
-    return { ...DEFAULT_CONFIG, ...c, sync: { ...DEFAULT_CONFIG.sync, ...(c.sync || {}) }, syncState: c.syncState || {} };
+    const sync = { ...DEFAULT_CONFIG.sync, ...(c.sync || {}) };
+    // 旧配置里的 sources 是保存时的快照，会盖掉新增来源（妙手因此被静默关掉）；
+    // 只把此后新增的来源默认并入，用户手动关掉的保持关闭。
+    const savedVersion = Number(c.sync?.sourcesVersion) || 1;
+    if (savedVersion < SOURCES_VERSION) {
+      sync.sources = (Array.isArray(sync.sources) ? [...sync.sources] : [...SOURCES]);
+      for (const s of SOURCES) if (!LEGACY_SOURCES.includes(s) && !sync.sources.includes(s)) sync.sources.push(s);
+      sync.sourcesVersion = SOURCES_VERSION;
+    }
+    return { ...DEFAULT_CONFIG, ...c, sync, syncState: c.syncState || {} };
   } catch { return structuredClone(DEFAULT_CONFIG); }
 }
 
@@ -84,7 +96,10 @@ export function updateConfig({ endpoint, key, adminPassword, syncEnabled, source
     }
     if (typeof adminPassword === 'string' && adminPassword) c.adminPassword = adminPassword;
     if (typeof syncEnabled === 'boolean') c.sync.enabled = syncEnabled;
-    if (Array.isArray(sources)) c.sync.sources = sources.filter((s) => SOURCES.includes(s));
+    if (Array.isArray(sources)) {
+      c.sync.sources = sources.filter((s) => SOURCES.includes(s));
+      c.sync.sourcesVersion = SOURCES_VERSION;   // 显式保存过勾选结果，之后不再自动并入新来源
+    }
   });
 }
 
@@ -173,9 +188,15 @@ async function doSync({ dryRun, trigger }) {
   for (const id of c.sync.sources) {
     const label = SOURCE_LABEL[id];
     try {
-      const { entries, notes, files } = await collectSource(id, { endpoint: c.endpoint, catpawModel: c.sync.catpawModel });
+      const { entries, notes, files, nextSentTotals } = await collectSource(id, {
+        endpoint: c.endpoint, catpawModel: c.sync.catpawModel, sentTotals: c.syncState[id]?.sentTotals,
+      });
       if (!files) { results.push({ source: id, label, status: 'absent' }); continue; }
-      const { selected, maxTs } = selectSince(entries, c.syncState[id]?.lastTs);
+      // catpaw 的行是「某天的差量」，时间戳落在历史日期，不能按水位线筛（会漏掉老日期的新差量）；
+      // 它的增量由 sentTotals 记账，entries 本身就是该发的差量。
+      const { selected, maxTs } = id === 'catpaw'
+        ? { selected: entries, maxTs: entries.length ? entries[entries.length - 1].timestamp : (c.syncState[id]?.lastTs ?? null) }
+        : selectSince(entries, c.syncState[id]?.lastTs);
       if (dryRun || !selected.length) {
         results.push({ source: id, label, status: dryRun ? 'dry-run' : 'up-to-date', total: entries.length, selected: selected.length, notes });
         continue;
@@ -188,7 +209,10 @@ async function doSync({ dryRun, trigger }) {
         imported += r.imported || 0;
         skipped += r.skipped || 0;
       }
-      await withConfig((cc) => { cc.syncState[id] = { lastTs: maxTs, at: new Date().toISOString() }; });
+      await withConfig((cc) => {
+        cc.syncState[id] = { lastTs: maxTs, at: new Date().toISOString() };
+        if (id === 'catpaw' && nextSentTotals) cc.syncState[id].sentTotals = nextSentTotals;
+      });
       results.push({ source: id, label, status: 'ok', total: entries.length, selected: selected.length, imported, skipped, notes });
     } catch (e) {
       results.push({ source: id, label, status: 'failed', error: e.message });
@@ -196,12 +220,13 @@ async function doSync({ dryRun, trigger }) {
     }
   }
   const imported = results.reduce((n, r) => n + (r.imported || 0), 0);
+  const skippedDup = results.reduce((n, r) => n + (r.skipped || 0), 0);
   const failed = results.filter((r) => r.status === 'failed');
   const summary = dryRun
     ? '预览：' + results.map((r) => `${r.label} ${r.status === 'absent' ? '未检测到' : (r.selected ?? 0) + ' 行'}`).join('，')
     : failed.length
-      ? `同步完成：新增 ${imported} 行，${failed.length} 个来源失败（${failed.map((r) => r.label + '：' + r.error).join('；')}）`
-      : `同步完成：新增 ${imported} 行`;
+      ? `同步完成：新增 ${imported} 行，跳过 ${skippedDup} 行重复，${failed.length} 个来源失败（${failed.map((r) => r.label + '：' + r.error).join('；')}）`
+      : `同步完成：新增 ${imported} 行，跳过 ${skippedDup} 行重复`;
   if (!dryRun) {
     await withConfig((cc) => { cc.lastSync = { at: new Date().toISOString(), trigger, summary, results }; });
     (failed.length ? logger.warn : logger.info).call(logger, '10R', summary);

@@ -78,7 +78,7 @@
 
 - **供应商额度卡片（10Router 1.2.1+）**：通过 `GET /api/usage/quotas` 一键读取 10Router 中其他供应商（CodeBuddy / Qoder / Claude / GLM 等）的额度卡片。CodeBuddy / Qoder / GLM 会自动标明**国内版 / 国际版**，当额度不足 10% 时自动标红并推送到仪表盘「需要处理」。支持 5 分钟连接级缓存与手动强制刷新。
 - **账号同步（一键推送为 10Router 连接）**：把本机 Qoder / WorkBuddy 账号直接推为 10Router 上游连接。配置 10Router 面板密码后走 **OAuth 通道**（accessToken + refreshToken，10R 端按身份去重并原位更新、自动续期，反复同步幂等）；仅配虚拟 key 时走 **apikey 通道**（同名连接不覆盖，token 过期后需重新同步）。zcode → GLM 映射待反代就绪后补充（映射表已留接口）。
-- **用量自动同步（10Router 1.0.7+）**：内置与 10router-sync 插件一致的同步逻辑，支持一键或每小时自动同步本机 ZCode（`db.sqlite` 官方渠道）、OpenCode（`opencode.db`）、mirasim（`usage-*.ndjson`）、小米 MiMo（`mimocode.db`）的真实用量，以及**妙手（CatPaw）云端用量**（`v1/usage/token/daily` 按天 token 总量；当天桶隔天入账，云端无输入/输出拆分、整包计入输入，模型列默认 `unknown`，可在 `tenrouter.json` 的 `sync.catpawModel` 标注）至 10Router 统计。支持断点续传与 2 天重叠补偿，服务端校验签名去重。
+- **用量自动同步（10Router 1.0.7+）**：内置与 10router-sync 插件一致的同步逻辑，支持一键或每小时自动同步本机 ZCode（`db.sqlite` 官方渠道）、OpenCode（`opencode.db`）、mirasim（`usage-*.ndjson`）、小米 MiMo（`mimocode.db`）的真实用量，以及**妙手（CatPaw）云端用量**（`v1/usage/token/daily` 按天 token 总量；当天桶隔天入账，云端无输入/输出拆分、整包计入输入，模型列默认 `unknown`，可在 `tenrouter.json` 的 `sync.catpawModel` 标注）至 10Router 统计。支持断点续传与 2 天重叠补偿。10Router 按**行内容签名**（时间戳 / provider / model / token 数等）去重，行内容还在变（会话进行中、按天桶增长）会被当成新行——因此客户端发出去的行保证已定型：1 小时结算窗内暂不发送、妙手按天桶只发差量、缺时间戳的行直接跳过；日志显示「新增 N 行，跳过 M 行重复」让去重结果可见。
 - *注：读取 SQLite 依赖 Node 22.5+ 内置的 `node:sqlite`（桌面版与 fnOS nodejs_v24 环境原生支持）。*
 
 ## 产品线说明

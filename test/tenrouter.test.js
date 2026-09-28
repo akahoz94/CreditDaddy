@@ -106,14 +106,14 @@ test('用量同步：首轮全量、第二轮只发增量，跳过经 10Router �
   const m = mockFetch((url, init) => {
     const body = JSON.parse(init.body);
     posted.push(body.usageHistory);
-    return { body: { imported: body.usageHistory.length, skipped: 0 } };
+    return { body: { imported: body.usageHistory.length, skipped: 2 } };
   });
   try {
     const r1 = await tr.runUsageSync();
     assert.match(m.calls[0].url, /\/api\/settings\/database\/import-usage$/);
     assert.equal(m.calls[0].init.headers.Authorization, 'Bearer sk-abcdefghijklmnop');
     assert.deepEqual(posted[0].map((e) => e.meta.mirasimCallId), ['a', 'b']);   // c 经 10Router 中转，d 无 token
-    assert.match(r1.summary, /新增 2 行/);
+    assert.match(r1.summary, /新增 2 行，跳过 2 行重复/);   // 服务端去重结果直接显示出来
 
     writeMirasim([
       { id: 'a', ts: '2026-09-01T00:00:00.000Z', provider: 'anthropic', input: 1, output: 1, status: 200 },
@@ -172,6 +172,33 @@ test('OpenCode 来源：1 小时内仍在更新的会话暂不同步（需要 no
   assert.match(r.notes[0], /暂不同步 1 个进行中的会话/);
 });
 
+test('MiMo 来源：未定型的消息暂不同步，缺时间戳的行直接跳过（需要 node:sqlite）', { skip: !hasSqlite && 'node:sqlite 不可用（Node < 22.5）' }, async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = path.join(home, '.local', 'share', 'mimocode');
+  fs.mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(path.join(dir, 'mimocode.db'));
+  db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)');
+  const ins = db.prepare('INSERT INTO message VALUES (?,?,?,?)');
+  const now = Date.now();
+  const msg = (id, time, tokens = { input: 10, output: 5 }) => [id, 's1', now - 3 * 3600e3, JSON.stringify({ role: 'assistant', providerID: 'mimo', modelID: 'm1', agent: 'a', tokens, time })];
+  ins.run(...msg('done-3h', { created: now - 4 * 3600e3, completed: now - 3 * 3600e3 }));
+  ins.run(...msg('fresh-10m', { created: now - 20 * 60e3, completed: now - 10 * 60e3 }));   // 刚完成：token 还可能回填
+  ins.run(...msg('no-done', { created: now - 3 * 3600e3 }));                                 // 完成时间缺失：可能还在写
+  ins.run('no-ts', 's1', null, JSON.stringify({ role: 'assistant', providerID: 'mimo', modelID: 'm1', tokens: { input: 1, output: 1 }, time: {} }));   // 连时间戳都没有：不能用 Date.now() 兜底
+  db.close();
+  const r = await us.collectSource('mimo');
+  assert.deepEqual(r.entries.map((e) => e.meta.mimoMessageId), ['done-3h']);   // 同步后端点时间戳来自消息本身
+  assert.ok(r.entries[0].timestamp.startsWith('2026') || !Number.isNaN(Date.parse(r.entries[0].timestamp)));
+  assert.match(r.notes.join(' '), /暂不同步 2 行未定型的消息/);
+  assert.match(r.notes.join(' '), /跳过 1 行缺时间戳的消息/);
+});
+
+test('缺时间戳的行不能转换：绝不用 Date.now() 兜底（每次同步都会变成“新行”）', () => {
+  assert.equal(us.convertZcodeRow({ provider_id: 'builtin:x', model_id: 'm', input_tokens: 1, output_tokens: 1 }), null);
+  assert.equal(us.convertOpencodeSession({ id: 's', tokens_input: 1, tokens_output: 1 }), null);
+  assert.equal(us.convertMimoMessage({ id: 'm' }, { role: 'assistant', tokens: { input: 1, output: 1 } }), null);
+});
+
 // ── 妙手（CatPaw）云端用量 ──
 
 function writeAccounts(list) {
@@ -223,6 +250,28 @@ test('妙手云端用量：当天桶与 0 token 天不入账，单账号失败�
     const catpaw = d.find((x) => x.id === 'catpaw');
     assert.equal(catpaw.found, true);
     assert.equal(catpaw.files, 2);
+  } finally { m.restore(); }
+});
+
+test('妙手云端用量：按天桶增长只发差量，桶没长不重发（整包重发会被 10R 当新行）', async () => {
+  const yKey = dayKey(new Date(Date.now() - 86400e3));
+  writeAccounts([{ id: 'acc-1', name: '主号', provider: 'catpaw', token: 'tok-1' }]);
+  let total = 100;
+  const m = mockFetch(() => ({ body: { code: 0, message: 'success', data: { daily: [{ date: yKey, totalTokens: total }] }, errorCode: null } }));
+  try {
+    const r1 = await us.collectSource('catpaw', { sentTotals: {} });
+    assert.equal(r1.entries.length, 1);
+    assert.equal(r1.entries[0].tokens.prompt_tokens, 100);
+    total = 150;   // 云端按天桶补录增长
+    const r2 = await us.collectSource('catpaw', { sentTotals: r1.nextSentTotals });
+    assert.equal(r2.entries.length, 1);
+    assert.equal(r2.entries[0].tokens.prompt_tokens, 50);   // 只发增量，不是整包 150
+    assert.notEqual(r2.entries[0].timestamp, r1.entries[0].timestamp);   // 差量段错开秒，签名不同
+    const r3 = await us.collectSource('catpaw', { sentTotals: r2.nextSentTotals });
+    assert.equal(r3.entries.length, 0);   // 桶没长：一行都不发
+    total = 140;   // 云端回撤
+    const r4 = await us.collectSource('catpaw', { sentTotals: r3.nextSentTotals });
+    assert.equal(r4.entries.length, 0);
   } finally { m.restore(); }
 });
 
@@ -304,4 +353,20 @@ test('账号同步：OAuth 通道登录换会话，transfer 分组推送完整�
     }
     assert.ok(seen.some((s) => s.url.endsWith('/api/auth/logout')));
   } finally { m.restore(); }
+});
+
+test('配置版本迁移：旧来源快照自动并入新增来源，显式保存后以保存值为准', async () => {
+  const f = path.join(process.env.CREDITDADDY_HOME, 'tenrouter.json');
+  const orig = JSON.parse(fs.readFileSync(f, 'utf8'));
+  try {
+    // 旧版保存的来源快照：用户手动关掉了 opencode / mimo
+    fs.writeFileSync(f, JSON.stringify({ ...orig, sync: { enabled: false, sources: ['zcode', 'mirasim'] } }));
+    let c = tr.loadConfig();
+    assert.deepEqual([...c.sync.sources].sort(), ['catpaw', 'mirasim', 'zcode']);   // 妙手默认并入，手动关掉的不复活
+    await tr.updateConfig({ sources: ['mirasim'] });
+    c = tr.loadConfig();
+    assert.deepEqual(c.sync.sources, ['mirasim']);   // 显式保存过勾选结果后不再自动并入
+  } finally {
+    fs.writeFileSync(f, JSON.stringify(orig));
+  }
 });

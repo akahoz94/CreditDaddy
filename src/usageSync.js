@@ -10,7 +10,12 @@
  *   catpaw    妙手云端用量（catx 网关 /v1/usage/token/daily，按天 token 总量；
  *             无输入/输出拆分，整包记 prompt_tokens；当天桶隔天再入账）
  * 行结构与插件一致（provider 前缀 zcode- / opencode- / mirasim- / mimo-，cost 记 0 或源值），
- * 10Router 按行签名去重，重复同步不会产生重复数据。
+ * 10Router 按行内容签名去重——签名 = (时间戳, provider, model, connectionId, apiKeyHash,
+ * 输入 token, 输出 token)，行内容一模一样才会被认作重复；行内容还在变（会话进行中、
+ * 按天聚合桶增长）就会被当成新行。所以客户端要保证发出去的行已经定型：
+ *   - 可能回填/累计的来源（opencode 会话、mimo 消息）在结算窗 SETTLE_MS 内暂不发送；
+ *   - 妙手按天桶只发差量，桶增长不再整包重发；
+ *   - 时间戳缺失的行直接跳过，绝不用 Date.now() 兜底（每次同步都会变成“新行”）。
  *
  * 增量：每个来源记住已同步到的最大时间戳，下一轮只发这之后（回退 2 天重叠兜底迟到行）的行；
  * 首次同步发送全部历史。SQLite 用 Node 内置 node:sqlite（Node 22.5+ / 桌面版 Electron 37 均可用），
@@ -26,6 +31,8 @@ import { fetchCatpawTokenDaily } from './catpawClient.js';
 export const SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo', 'catpaw'];
 export const SOURCE_LABEL = { zcode: 'ZCode', opencode: 'OpenCode', mirasim: 'mirasim', mimo: '小米 MiMo', catpaw: '妙手' };
 const OVERLAP_MS = 2 * 86400e3;
+/** 结算窗：时间戳在此窗口内的行可能还在被来源更新（token 累计、时间字段回填），暂不发送 */
+const SETTLE_MS = 60 * 60 * 1000;
 
 let sqliteMod;
 /** node:sqlite 是否可用（Node 22.5+）；不可用时 SQLite 来源跳过，mirasim（ndjson）仍可同步 */
@@ -87,6 +94,8 @@ const isOfficialProvider = (id) => OFFICIAL_PREFIXES.some((p) => String(id || ''
 const statusTo10r = (s) => (s === 'completed' ? 'ok' : 'error');   // cancelled 也消耗了 token，记 error
 
 export function convertZcodeRow(row) {
+  const ms = Number(row.started_at || row.completed_at);
+  if (!Number.isFinite(ms) || ms <= 0) return null;   // 缺时间戳不能用 Date.now() 兜底：每次同步都是一条“新行”
   const tokens = {
     prompt_tokens: row.input_tokens || 0,
     completion_tokens: row.output_tokens || 0,
@@ -95,7 +104,7 @@ export function convertZcodeRow(row) {
     ...(row.cache_read_input_tokens ? { cache_read_input_tokens: row.cache_read_input_tokens } : {}),
   };
   return {
-    timestamp: new Date(row.started_at || row.completed_at || Date.now()).toISOString(),
+    timestamp: new Date(ms).toISOString(),
     provider: 'zcode-' + String(row.provider_id || 'unknown').replace(/^(builtin:|account:)/, ''),
     model: row.model_id || 'unknown',
     connectionId: null, apiKey: null,
@@ -111,6 +120,8 @@ export function convertZcodeRow(row) {
 }
 
 export function convertOpencodeSession(s) {
+  const ms = Number(s.time_created);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
   let modelId = 'unknown', providerID = 'opencode';
   if (s.model) {
     try {
@@ -122,7 +133,7 @@ export function convertOpencodeSession(s) {
   const tokens = { prompt_tokens: s.tokens_input || 0, completion_tokens: s.tokens_output || 0 };
   if (s.tokens_cache_read) tokens.cache_read_input_tokens = s.tokens_cache_read;
   return {
-    timestamp: new Date(s.time_created).toISOString(),
+    timestamp: new Date(ms).toISOString(),
     provider: 'opencode-' + providerID,
     model: modelId,
     connectionId: null, apiKey: null,
@@ -146,8 +157,10 @@ export function convertMimoMessage(row, d) {
     ...(t.cache?.read ? { cache_read_input_tokens: t.cache.read } : {}),
     ...(t.cache?.write ? { cache_creation_input_tokens: t.cache.write } : {}),
   };
+  const ms = Number(d.time?.completed || d.time?.created || row.time_created);
+  if (!Number.isFinite(ms) || ms <= 0) return null;   // 缺时间戳宁可不发：Date.now() 兜底每次都会变成“新行”
   return {
-    timestamp: new Date(d.time?.completed || d.time?.created || row.time_created || Date.now()).toISOString(),
+    timestamp: new Date(ms).toISOString(),
     provider: 'mimo-' + (d.providerID || 'mimo'),
     model: d.modelID || 'unknown',
     connectionId: null, apiKey: null,
@@ -207,9 +220,10 @@ export function convertMirasimRow(e) {
  * （LLM 负载输入占大头，这样拆分偏差最小）；成本记 0（套餐制，与 zcode 官方渠道同口径）。
  * connectionId 参与 10Router 行签名，用它区分多账号，避免同日同量互相去重。
  */
-export function convertCatpawDaily(date, totalTokens, account, modelLabel = 'unknown') {
+export function convertCatpawDaily(date, deltaTokens, account, modelLabel = 'unknown', seq = 0, totalTokens = deltaTokens) {
   const [y, m, d] = String(date).split('-').map(Number);
-  const ts = new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);   // 本地正午锚点：任何时区都落在当天
+  // 本地正午锚点：任何时区都落在当天；seq 秒偏移让同日多段差量签名不同（否则等量差量会被去重误杀）
+  const ts = new Date(y, (m || 1) - 1, d || 1, 12, 0, seq % 60);
   return {
     timestamp: ts.toISOString(),
     provider: 'catpaw-catx',
@@ -219,20 +233,26 @@ export function convertCatpawDaily(date, totalTokens, account, modelLabel = 'unk
     endpoint: 'catpaw://daily',
     cost: 0,
     status: 'ok',
-    tokens: { prompt_tokens: totalTokens, completion_tokens: 0 },
+    tokens: { prompt_tokens: deltaTokens, completion_tokens: 0 },
     meta: {
       source: 'catpaw', aggregate: 'daily', unsplitTokens: true, planUsage: true,
-      catpawAccountId: account.id, accountName: account.name || null, date, totalTokens,
+      catpawAccountId: account.id, accountName: account.name || null,
+      date, deltaTokens, totalTokens, seq,
     },
   };
 }
 
 const localDateKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-/** 妙手云端用量：逐账号拉按天 token 总量（当天桶不完整，留到隔天再入账） */
-async function collectCatpaw(accounts, modelLabel) {
+/**
+ * 妙手云端用量：逐账号拉按天 token 总量（当天桶不完整，留到隔天再入账）。
+ * 云端按天桶会随补录增长，整包重发会被 10Router 当成新行（token 数不同、签名不同）→ 同一天记多行。
+ * 所以按 sentTotals 记账只发差量：桶没长就不发；桶长了只发增量，时间戳按发送次数错开秒。
+ */
+async function collectCatpaw(accounts, modelLabel, sentTotals = {}) {
   const out = [];
   const notes = [];
+  const nextSent = {};
   const now = Date.now();
   const todayKey = localDateKey();
   let failed = 0, lastErr = null;
@@ -242,14 +262,20 @@ async function collectCatpaw(accounts, modelLabel) {
       for (const d of daily) {
         if (!d || !d.date || !(Number(d.totalTokens) > 0)) continue;
         if (d.date >= todayKey) continue;
-        out.push(convertCatpawDaily(d.date, Number(d.totalTokens), a, modelLabel));
+        const key = a.id + '|' + d.date;
+        const total = Number(d.totalTokens);
+        const prev = sentTotals[key] || { total: 0, parts: 0 };
+        const delta = total - (Number(prev.total) || 0);
+        if (delta <= 0) { nextSent[key] = prev; continue; }   // 桶没长（或云端回撤）：不重发
+        out.push(convertCatpawDaily(d.date, delta, a, modelLabel, prev.parts || 0, total));
+        nextSent[key] = { total, parts: (prev.parts || 0) + 1 };
       }
     } catch (e) { failed++; lastErr = e; }
   }
   if (failed && !out.length) throw lastErr;
   if (failed) notes.push(`${failed} 个妙手账号用量拉取失败：${lastErr && lastErr.message}`);
   out.sort((x, y) => (x.timestamp < y.timestamp ? -1 : 1));
-  return { entries: out, notes };
+  return { entries: out, notes, nextSentTotals: { ...sentTotals, ...nextSent } };
 }
 
 // ── 读取 ──
@@ -270,7 +296,7 @@ function withSnapshot(dbPath, fn) {
 function collectZcode(files) {
   const out = [];
   const seen = new Set();
-  let skippedCustom = 0;
+  let skippedCustom = 0, skippedNoTs = 0;
   for (const f of files) {
     withSnapshot(f, (db) => {
       let rows;
@@ -286,33 +312,37 @@ function collectZcode(files) {
           if (seen.has(k)) continue;
           seen.add(k);
         }
-        out.push(convertZcodeRow(r));
+        const e = convertZcodeRow(r);
+        if (!e) { skippedNoTs++; continue; }
+        out.push(e);
       }
     });
   }
-  return { entries: out, notes: skippedCustom ? [`跳过 ${skippedCustom} 行自定义 / 网关渠道（已在别处记账）`] : [] };
+  return { entries: out, notes: (skippedCustom ? [`跳过 ${skippedCustom} 行自定义 / 网关渠道（已在别处记账）`] : []).concat(skippedNoTs ? [`跳过 ${skippedNoTs} 行缺时间戳的记录（无稳定签名，避免每次同步都当成新行）`] : []) };
 }
 
 // OpenCode 一个会话一行（会话级累计），会话还在继续时 token 会变 → 签名变 → 10Router 去重拦不住，
-// 同一会话会被记成两行。所以最近 OPENCODE_SETTLE_MS 内仍在更新的会话先不同步，等它停下来再同步。
-const OPENCODE_SETTLE_MS = 60 * 60 * 1000;
+// 同一会话会被记成两行。所以最近 SETTLE_MS 内仍在更新的会话（或更新时间不可信的）先不同步，等它停下来再同步。
 function collectOpencode(files, now = Date.now()) {
   const out = [];
-  let active = 0;
+  let active = 0, skippedNoTs = 0;
   for (const f of files) {
     withSnapshot(f, (db) => {
       for (const r of db.prepare('SELECT id, title, model, agent, cost, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, time_created, time_updated FROM session ORDER BY time_created ASC').all()) {
-        if (Number.isFinite(r.time_updated) && now - r.time_updated < OPENCODE_SETTLE_MS) { active++; continue; }
-        out.push(convertOpencodeSession(r));
+        if (!Number.isFinite(r.time_updated) || now - r.time_updated < SETTLE_MS) { active++; continue; }
+        const e = convertOpencodeSession(r);
+        if (!e) { skippedNoTs++; continue; }
+        out.push(e);
       }
     });
   }
-  return { entries: out, notes: active ? [`暂不同步 ${active} 个进行中的会话（1 小时内仍有更新，结束后再同步，避免同一会话记两行）`] : [] };
+  return { entries: out, notes: (active ? [`暂不同步 ${active} 个进行中的会话（1 小时内仍有更新，结束后再同步，避免同一会话记两行）`] : []).concat(skippedNoTs ? [`跳过 ${skippedNoTs} 行缺时间戳的会话`] : []) };
 }
 
-function collectMimo(files) {
+function collectMimo(files, now = Date.now()) {
   const out = [];
   const seen = new Set();
+  let unsettled = 0, skippedNoTs = 0;
   for (const f of files) {
     withSnapshot(f, (db) => {
       for (const r of db.prepare('SELECT id, session_id, time_created, data FROM message ORDER BY time_created ASC').all()) {
@@ -322,17 +352,26 @@ function collectMimo(files) {
         if (r.id) { if (seen.has(r.id)) continue; seen.add(r.id); }
         const t = d.tokens || {};
         if (!((t.input || 0) + (t.output || 0) + (t.reasoning || 0) + (t.cache?.read || 0) + (t.cache?.write || 0))) continue;
-        out.push(convertMimoMessage(r, d));
+        // 消息落库后 token / 完成时间还可能回填：没有 time.completed 或刚完成的先不同步，等它定型
+        const doneMs = Number(d.time?.completed);
+        if (!Number.isFinite(doneMs) || doneMs <= 0 || now - doneMs < SETTLE_MS) {
+          const anyMs = Number(d.time?.created || r.time_created);
+          if (Number.isFinite(anyMs) && anyMs > 0) unsettled++; else skippedNoTs++;
+          continue;
+        }
+        const e = convertMimoMessage(r, d);
+        if (!e) { skippedNoTs++; continue; }
+        out.push(e);
       }
     });
   }
-  return { entries: out, notes: [] };
+  return { entries: out, notes: (unsettled ? [`暂不同步 ${unsettled} 行未定型的消息（1 小时内完成或完成时间缺失，结束后再同步，避免同一消息记两行）`] : []).concat(skippedNoTs ? [`跳过 ${skippedNoTs} 行缺时间戳的消息`] : []) };
 }
 
-function collectMirasim(files, endpoint) {
+function collectMirasim(files, endpoint, now = Date.now()) {
   const out = [];
   const seen = new Set();
-  let selfHosted = 0;
+  let selfHosted = 0, unsettled = 0;
   for (const f of files) {
     for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
       if (!line.trim()) continue;
@@ -342,18 +381,21 @@ function collectMirasim(files, endpoint) {
       if (e.id) { if (seen.has(e.id)) continue; seen.add(e.id); }
       if (isSelfHostedUpstream(e.upstreamHost, endpoint)) { selfHosted++; continue; }
       if (!((e.input || 0) + (e.output || 0) + (e.cacheRead || 0) + (e.cacheWrite || 0))) continue;
+      // 刚发生的调用可能还在补字段（durationMs / token 等），定型前先不发
+      const tsMs = Date.parse(e.ts);
+      if (!Number.isFinite(tsMs) || now - tsMs < SETTLE_MS) { unsettled++; continue; }
       out.push(convertMirasimRow(e));
     }
   }
-  return { entries: out, notes: selfHosted ? [`跳过 ${selfHosted} 行经 10Router 中转的调用（已在 10Router 记账）`] : [] };
+  return { entries: out, notes: (selfHosted ? [`跳过 ${selfHosted} 行经 10Router 中转的调用（已在 10Router 记账）`] : []).concat(unsettled ? [`暂不同步 ${unsettled} 行 1 小时内的新调用（等记录定型）`] : []) };
 }
 
-/** 读取某来源的全部行：{ entries, notes, files }；来源不存在返回 entries=[] */
-export async function collectSource(id, { endpoint, paths = sourcePaths(), catpawModel } = {}) {
+/** 读取某来源的全部行：{ entries, notes, files, sentTotals? }；来源不存在返回 entries=[] */
+export async function collectSource(id, { endpoint, paths = sourcePaths(), catpawModel, sentTotals } = {}) {
   if (id === 'catpaw') {
     const accounts = (await loadAccounts()).filter((a) => a.provider === 'catpaw' && a.token);
     if (!accounts.length) return { entries: [], notes: [], files: 0 };
-    const r = await collectCatpaw(accounts, catpawModel || 'unknown');
+    const r = await collectCatpaw(accounts, catpawModel || 'unknown', sentTotals || {});
     return { ...r, files: accounts.length };
   }
   const files = paths[id] || [];
