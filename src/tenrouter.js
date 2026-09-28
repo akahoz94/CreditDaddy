@@ -19,7 +19,7 @@ const FILE = () => path.join(dataDir(), 'tenrouter.json');
 const QUOTA_TIMEOUT_MS = 90_000;   // 10Router 端并发查询全部供应商，冷缓存时可能较慢
 const IMPORT_TIMEOUT_MS = 120_000;
 const BATCH = 5000;
-const SYNC_INTERVAL_MS = 10 * 60 * 1000;   // 每 10 分钟增量同步一次（本地读库 + 增量上传，开销很小）
+const SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_CONFIG = { endpoint: '', key: '', sync: { enabled: false, sources: [...SOURCES] }, syncState: {}, lastSync: null };
 
 export function loadConfig() {
@@ -207,7 +207,7 @@ async function doSync({ dryRun, trigger }) {
   return { summary, results };
 }
 
-/** 后台每 10 分钟增量同步一次（仅在配置了且开启自动同步时） */
+/** 后台每小时同步一次（仅在配置了且开启自动同步时） */
 export function startUsageSyncScheduler() {
   if (timer) return;
   const tick = () => {
