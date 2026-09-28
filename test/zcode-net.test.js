@@ -47,8 +47,31 @@ test('自动轮询领取开关：默认关，开启后落盘', () => {
   assert.equal(zc.autoClaimEnabled(), true);
   const onDisk = JSON.parse(fs.readFileSync(path.join(process.env.CREDITDADDY_HOME, 'zcode-net.json'), 'utf8'));
   assert.equal(onDisk.autoClaim, true);
+  assert.equal(onDisk.autoClaimUntil, null, '普通开启不带时限');
   zc.setAutoClaimEnabled(false);
   assert.equal(zc.autoClaimEnabled(), false);
+});
+
+test('enableAutoClaimFor：限时开启，到期自动失效；手动关闭清掉时限', () => {
+  assert.equal(zc.autoClaimEnabled(), false);
+  zc.enableAutoClaimFor(60 * 60 * 1000);
+  assert.equal(zc.autoClaimEnabled(), true);
+  assert.ok(zc.autoClaimUntil() > Date.now() + 55 * 60 * 1000, '时限应在 ~1 小时后');
+  const onDisk = JSON.parse(fs.readFileSync(path.join(process.env.CREDITDADDY_HOME, 'zcode-net.json'), 'utf8'));
+  assert.equal(onDisk.autoClaim, true);
+  assert.ok(onDisk.autoClaimUntil > Date.now(), '到期时间落盘（重启后仍生效）');
+
+  zc.setAutoClaimEnabled(false);
+  assert.equal(zc.autoClaimEnabled(), false);
+  assert.equal(zc.autoClaimUntil(), null);
+  const off = JSON.parse(fs.readFileSync(path.join(process.env.CREDITDADDY_HOME, 'zcode-net.json'), 'utf8'));
+  assert.equal(off.autoClaimUntil, null);
+});
+
+test('enableAutoClaimFor：非法时长拒绝', () => {
+  assert.throws(() => zc.enableAutoClaimFor(0));
+  assert.throws(() => zc.enableAutoClaimFor(-1000));
+  assert.throws(() => zc.enableAutoClaimFor('x'));
 });
 
 test('setProxyUrl：设置 / 读取 / 清除；非法地址拒绝', () => {

@@ -55,9 +55,9 @@ import { readWorkbuddySessions, writeWorkbuddySession, workbuddyAuthDir, current
 import { liveToAccount as zcodeLiveAccount, switchTo as zcodeSwitchTo, currentZcodeUid, currentZcodeIdentity, detectZcode, ensureVirtualDeviceMid, terminateZcode, zcodeRunning } from './zcodeLocal.js';
 import { liveToAccount as mirasimLiveAccount, switchTo as mirasimSwitchTo, currentMirasimUid, detectMirasim, terminateMirasim, mirasimRunning } from './mirasimLocal.js';
 import { liveToAccount as catpawLiveAccount, switchTo as catpawSwitchTo, currentCatpawToken, detectCatpaw, terminateCatpaw } from './catpawLocal.js';
-import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, setAutoClaimEnabled } from './zcodeClient.js';
+import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, autoClaimUntil, setAutoClaimEnabled } from './zcodeClient.js';
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
-import { runCheckinTick, getSchedulerInfo, dayKey } from './checkin.js';
+import { runCheckinTick, getSchedulerInfo, dayKey, enableZcodeAutoClaimForOneHour, refreshZcodeScheduler, pollZcodeNow } from './checkin.js';
 import { detectQoderApps, readQoderAppAccounts, riskIdentityAvailable, riskIdentitySource } from './qoderApp.js';
 import { umidInfo, installUmid } from './qoderUmid.js';
 import * as tenrouter from './tenrouter.js';
@@ -257,18 +257,25 @@ async function handleApi(req, res, url) {
   // 单账号签到
   const checkinMatch = p.match(/^\/api\/accounts\/([\w-]+)\/checkin$/);
   if (checkinMatch && method === 'POST') {
-    const { results, summary } = await runCheckinTick({ onlyAccountId: checkinMatch[1], skipIfCheckedToday: false });
+    const accounts = await loadAccounts();
+    const account = accounts.find((a) => a.id === checkinMatch[1]);
+    const { results, summary } = account?.provider === 'zcode'
+      ? await pollZcodeNow([account.id])
+      : await runCheckinTick({ onlyAccountId: checkinMatch[1], skipIfCheckedToday: false });
     return json(res, 200, { results, summary });
   }
 
   // 全部签到（默认跳过今日已签；传 skipIfCheckedToday:false 强制全部重签）
   if (p === '/api/checkin' && method === 'POST') {
     const body = await readBody(req).catch(() => ({}));
-    const { results, summary } = await runCheckinTick({
+    const opts = {
       provider: body?.provider || undefined,
       product: body?.product || undefined,
       skipIfCheckedToday: body?.skipIfCheckedToday !== false,
-    });
+    };
+    const { results, summary } = opts.provider === 'zcode' || opts.product === 'zcode'
+      ? await pollZcodeNow()
+      : await runCheckinTick(opts);
     return json(res, 200, { results, summary });
   }
 
@@ -331,20 +338,26 @@ async function handleApi(req, res, url) {
     }
   }
   // ZCode 出口偏好：默认「直连优先、代理兜底」，可切「代理优先、直连兜底」；代理地址可面板配置（存 zcode-net.json，0600）
+  // 自动领取开启时附带 1 小时时限（autoClaimUntil），到期调度器自动关闭并停止轮询
   if (p === '/api/zcode/net' && method === 'GET') {
     const u = proxyUrl();
     const masked = u ? (() => { try { const x = new URL(u); x.password = x.password ? '*'.repeat(4) : ''; return x.toString(); } catch { return '***'; } })() : null;
-    return json(res, 200, { proxyFirst: proxyFirst(), proxyUrlMasked: masked, autoClaim: autoClaimEnabled(), hasEnvProxy: Boolean(process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) });
+    const ac = autoClaimEnabled();
+    return json(res, 200, { proxyFirst: proxyFirst(), proxyUrlMasked: masked, autoClaim: ac, autoClaimUntil: ac ? autoClaimUntil() : null, hasEnvProxy: Boolean(process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) });
   }
   if (p === '/api/zcode/net' && method === 'PUT') {
     const body = await readBody(req).catch(() => ({}));
     try {
       if (body?.proxyFirst !== undefined) setProxyFirst(body.proxyFirst === true);
       if (body?.proxyUrl !== undefined) setProxyUrl(body.proxyUrl);
-      if (body?.autoClaim !== undefined) setAutoClaimEnabled(body.autoClaim === true);
+      if (body?.autoClaim !== undefined) {
+        if (body.autoClaim === true) enableZcodeAutoClaimForOneHour();   // 开 = 开启 1 小时时段（2 分钟后首轮，之后每 ~2 分钟）
+        else { setAutoClaimEnabled(false); refreshZcodeScheduler(); }    // 关 = 立即停表
+      }
     } catch (e) { return json(res, 400, { error: e.message }); }
-    logger.info('DAEMON', `ZCode 出口：${proxyFirst() ? '代理优先' : '直连优先'}，自动领取：${autoClaimEnabled() ? '开' : '关'}，代理 ${proxyUrl() || '(环境变量/未设置)'}`);
-    return json(res, 200, { proxyFirst: proxyFirst(), autoClaim: autoClaimEnabled() });
+    const ac = autoClaimEnabled();
+    logger.info('DAEMON', `ZCode 出口：${proxyFirst() ? '代理优先' : '直连优先'}，自动领取：${ac ? '开' : '关'}，代理 ${proxyUrl() || '(环境变量/未设置)'}`);
+    return json(res, 200, { proxyFirst: proxyFirst(), autoClaim: ac, autoClaimUntil: ac ? autoClaimUntil() : null });
   }
 
   // 切换 WorkBuddy / ZCode 客户端当前登录账号

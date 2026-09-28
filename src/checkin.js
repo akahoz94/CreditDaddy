@@ -1,12 +1,5 @@
 /**
- * 签到调度 — 逻辑对齐 10router qoderCheckin.js：
- *   - 一次 tick 扫描全部账号
- *   - 已确认完成今日签到的账号当天跳过（state.json 记忆）
- *   - "无可领活动" 不记忆（每日 10:00 (UTC+8) 刷新积分，之后还会出现可领活动）
- *   - "签到日" 以积分刷新时刻 10:00 (UTC+8) 为界，与本机时区无关
- *   - 国际版每台设备每天只能领一次（服务端按设备风控身份限领）：本机已有账号领取后，
- *     其余国际版账号标记为 limited 并当日记忆，不再反复请求
- *   - 定时器每 ~2h + 抖动执行一次；多轮签到（定时 / 手动）串行执行
+ * 签到调度：普通账号每 ~2h 扫描一次；ZCode 自动活动领取使用独立的短周期调度。
  */
 
 import { loadAccounts, loadState, saveState, withAccounts } from './store.js';
@@ -15,30 +8,50 @@ import { productOf } from './constants.js';
 import { startUsageSyncScheduler } from './tenrouter.js';
 import { refreshContext } from './accounts.js';
 import { zcodeAutoClaim } from './zcodeAutoClaim.js';
-import { autoClaimEnabled, warmZcodeAppVersion } from './zcodeClient.js';
+import {
+  autoClaimEnabled, autoClaimUntil, enableAutoClaimFor, setAutoClaimEnabled,
+  warmZcodeAppVersion,
+} from './zcodeClient.js';
 import { logger } from './logger.js';
 
-const TICK_MS = 2 * 60 * 60 * 1000;        // 2 小时
-const TICK_JITTER_MS = 10 * 60 * 1000;     // ±10 分钟抖动，避免整点请求特征
+const TICK_MS = 2 * 60 * 60 * 1000;
+const TICK_JITTER_MS = 10 * 60 * 1000;
+const ZCODE_TICK_MS = 2 * 60 * 1000;
+const ZCODE_JITTER_MS = 15 * 1000;
+const ZCODE_FIRST_DELAY_MS = 2 * 60 * 1000;
+const ZCODE_AUTO_CLAIM_WINDOW_MS = 60 * 60 * 1000;
 
 // 每日积分刷新：10:00 (UTC+8) = 02:00 UTC。签到日 = (now - 2h) 的 UTC 日期
 const REFRESH_UTC_OFFSET_MS = 2 * 60 * 60 * 1000;
 
 let timerHandle = null;
+let zcodeTimerHandle = null;
+let zcodeExpiryTimerHandle = null;
+let zcodeExpiryAt = null;
+let zcodeNextTickAt = null;
+let zcodeLastTick = null;
+let zcodeTicking = false;
+let zcodeQueue = Promise.resolve();
 let tickQueue = Promise.resolve();
 let nextTickAt = null;
-let lastTick = null;   // { at, summary }
+let lastTick = null;
 let ticking = false;
 
 /** 调度器状态（面板展示用） */
 export function getSchedulerInfo() {
-  return { running: Boolean(timerHandle), nextTickAt, lastTick, ticking };
+  const enabled = autoClaimEnabled();
+  return {
+    running: Boolean(timerHandle), nextTickAt, lastTick, ticking,
+    zcode: {
+      enabled,
+      autoOffAt: enabled ? autoClaimUntil() : null,
+      nextTickAt: enabled ? zcodeNextTickAt : null,
+      lastTick: zcodeLastTick,
+      ticking: zcodeTicking,
+    },
+  };
 }
 
-/**
- * 当前所属的"签到日"（YYYY-MM-DD）。以 10:00 (UTC+8) 为日界：
- * 刷新前领过的记录不会让刷新后的新一轮被跳过；也不受 NAS / 海外机器时区影响。
- */
 export function dayKey(nowMs = Date.now()) {
   return new Date(nowMs - REFRESH_UTC_OFFSET_MS).toISOString().slice(0, 10);
 }
@@ -47,19 +60,125 @@ export function msUntilNextTick(nowMs = Date.now(), rand = Math.random) {
   return Math.max(TICK_MS + Math.floor(rand() * TICK_JITTER_MS), 1000);
 }
 
+export function zcodeMsUntilNextTick(rand = Math.random) {
+  return Math.max(ZCODE_TICK_MS + Math.floor(rand() * ZCODE_JITTER_MS), 1000);
+}
+
+/** 开启 ZCode 自动领取一小时；首次资格检查两分钟后开始。 */
+export function enableZcodeAutoClaimForOneHour() {
+  enableAutoClaimFor(ZCODE_AUTO_CLAIM_WINDOW_MS);
+  syncZcodeScheduler(true);
+  return autoClaimUntil();
+}
+
+/** 更新 ZCode 定时器，autoClaimUntil 是持久化的到期时间，重启后仍会生效。 */
+export function refreshZcodeScheduler() {
+  syncZcodeScheduler();
+}
+
+function clearZcodeTimers() {
+  if (zcodeTimerHandle) clearTimeout(zcodeTimerHandle);
+  if (zcodeExpiryTimerHandle) clearTimeout(zcodeExpiryTimerHandle);
+  zcodeTimerHandle = null;
+  zcodeExpiryTimerHandle = null;
+  zcodeExpiryAt = null;
+  zcodeNextTickAt = null;
+}
+
+function scheduleZcodeNextTick(delay = zcodeMsUntilNextTick()) {
+  if (!autoClaimEnabled()) {
+    syncZcodeScheduler();
+    return;
+  }
+  if (zcodeTimerHandle) clearTimeout(zcodeTimerHandle);
+  zcodeNextTickAt = new Date(Date.now() + delay).toISOString();
+  zcodeTimerHandle = setTimeout(() => {
+    zcodeTimerHandle = null;
+    zcodeNextTickAt = null;
+    runZcodeTick().catch((err) => logger.error('ZCODE-CLAIM', `资格轮询失败：${err?.message || err}`))
+      .finally(() => scheduleZcodeNextTick());
+  }, delay);
+  zcodeTimerHandle.unref?.();
+}
+
+function syncZcodeScheduler(startFresh = false) {
+  if (!autoClaimEnabled()) {
+    clearZcodeTimers();
+    return;
+  }
+
+  const expiresAt = autoClaimUntil();
+  if (startFresh && zcodeTimerHandle) {
+    clearTimeout(zcodeTimerHandle);
+    zcodeTimerHandle = null;
+    zcodeNextTickAt = null;
+  }
+  if (!zcodeTimerHandle && !zcodeTicking) scheduleZcodeNextTick(ZCODE_FIRST_DELAY_MS);
+
+  if (expiresAt && zcodeExpiryAt !== expiresAt) {
+    if (zcodeExpiryTimerHandle) clearTimeout(zcodeExpiryTimerHandle);
+    zcodeExpiryAt = expiresAt;
+    zcodeExpiryTimerHandle = setTimeout(() => {
+      zcodeExpiryTimerHandle = null;
+      setAutoClaimEnabled(false);
+      clearZcodeTimers();
+      logger.info('ZCODE-CLAIM', '一小时自动领取时段已结束，自动领取已关闭');
+    }, Math.max(0, expiresAt - Date.now()));
+    zcodeExpiryTimerHandle.unref?.();
+  }
+}
+
+function runZcodeTick(accountIds, { force = false } = {}) {
+  const run = zcodeQueue.then(async () => {
+    if (!force && !autoClaimEnabled()) return { results: [], summary: 'ZCode 自动领取已关闭' };
+    zcodeTicking = true;
+    const results = [];
+    try {
+      const accounts = (await loadAccounts()).filter((a) => a.provider === 'zcode'
+        && (!accountIds || accountIds.has(a.id)));
+      for (const account of accounts) {
+        if (!force && !autoClaimEnabled()) break;
+        const label = account.name || account.uid || account.id;
+        try {
+          const outcome = await zcodeAutoClaim(account);
+          if (!outcome) continue;
+          results.push({ accountId: account.id, account: label, provider: 'zcode', status: outcome.status, message: outcome.message });
+          const lastResult = { status: outcome.status, message: outcome.message, amount: 0, at: new Date().toISOString() };
+          await withAccounts((list) => {
+            const current = list.find((a) => a.id === account.id);
+            if (current) current.lastResult = lastResult;
+          });
+        } catch (err) {
+          logger.warn('ZCODE-CLAIM', `${label} 自动领取异常：${err?.message || err}`);
+        }
+      }
+      zcodeLastTick = {
+        at: new Date().toISOString(),
+        summary: `ZCode 资格轮询完成：${results.length} 个账号返回活动结果`,
+      };
+      return { results, summary: zcodeLastTick.summary };
+    } finally {
+      zcodeTicking = false;
+    }
+  });
+  zcodeQueue = run.catch(() => {});
+  return run;
+}
+
+/** 手动触发一次 ZCode 资格轮询（面板单账号 / 全部领取走这里），与定时轮共用同一队列；手动轮不受开关限制。 */
+export function pollZcodeNow(accountIds) {
+  return runZcodeTick(accountIds && accountIds.length ? new Set(accountIds) : null, { force: true });
+}
+
 async function getDoneMap(state) {
   const today = dayKey();
   const raw = state?.qoderDailyDone;
   const map = raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {};
-  // 只保留今天的记录，其余清掉
-  for (const k of Object.keys(map)) if (map[k] !== today) delete map[k];
+  for (const key of Object.keys(map)) if (map[key] !== today) delete map[key];
   return map;
 }
 
-/**
- * 执行一轮签到。多次调用会排队串行执行，避免同一账号被并发领取、state.json 互相覆盖。
- * @param {{provider?: string, product?: string, skipIfCheckedToday?: boolean, onlyAccountId?: string}} opts
- */
+/** 多次调用排队串行执行，避免并发签到和 state.json 覆盖。 */
 export function runCheckinTick(opts = {}) {
   const run = tickQueue.then(() => runTickNow(opts));
   tickQueue = run.catch(() => {});
@@ -73,16 +192,13 @@ async function runTickNow(opts) {
 
 async function runTickInner(opts) {
   const allAccounts = await loadAccounts();
-  // 没有每日签到能力的产品（如 ZCode：积分靠需验证码的活动领取）不参与签到轮
   const accounts = allAccounts.filter(
     (a) => (!opts.provider || a.provider === opts.provider)
         && (!opts.product || productOf(a.provider) === opts.product)
         && (!opts.onlyAccountId || a.id === opts.onlyAccountId)
         && typeof productImpl(a.provider)?.checkin === 'function'
   );
-
-  // ZCode 活动轮询领取：开关打开（标签页可切换，默认关）且未被筛选参数排除时参与
-  const zAccounts = (autoClaimEnabled()
+  const zAccounts = (opts.includeZcode !== false && autoClaimEnabled()
       && !opts.onlyAccountId
       && (!opts.provider || opts.provider === 'zcode')
       && (!opts.product || opts.product === 'zcode'))
@@ -97,7 +213,6 @@ async function runTickInner(opts) {
   const memo = await getDoneMap(state);
   const today = dayKey();
   const results = [];
-  // 本设备今日领取国际版每日积分的账号 { day, accountId, name }
   let deviceClaim = state?.deviceClaim?.day === today ? state.deviceClaim : null;
 
   for (const account of accounts) {
@@ -108,7 +223,7 @@ async function runTickInner(opts) {
         continue;
       }
 
-      const ctx = refreshContext(account, (m) => logger.info('CHECKIN', `${label}：${m}`));
+      const ctx = refreshContext(account, (message) => logger.info('CHECKIN', `${label}：${message}`));
       let outcome = await productImpl(account.provider).checkin(account, ctx);
       if (account.provider === 'qoder' && outcome.risk) {
         if (outcome.status === 'checked-in') {
@@ -139,7 +254,6 @@ async function runTickInner(opts) {
         memo[account.id] = today;
         logger.info('CHECKIN', `${label}：${outcome.message}`);
       } else if (outcome.status === 'no-activity') {
-        // 不记忆——积分窗口（10:00 UTC+8）打开后还会出现可领活动
         logger.debug('CHECKIN', `${label}：${outcome.message || '当前无可领取的活动'}`);
       } else {
         logger.warn('CHECKIN', `${label} 领取失败：${outcome.error || outcome.status}`);
@@ -151,34 +265,22 @@ async function runTickInner(opts) {
     }
   }
 
-  // 保存签到日历与账号 lastCheckin / lastResult / uid（在账号锁内重新读取，不覆盖期间的增删）
-  await withAccounts((all) => {
-    for (const updated of accounts) {
-      const cur = all.find((a) => a.id === updated.id);
-      if (!cur) continue;
-      cur.lastCheckin = updated.lastCheckin;
-      if (updated.lastResult) cur.lastResult = updated.lastResult;
-      if (updated.uid && !cur.uid) cur.uid = updated.uid;
-    }
-  });
-  await saveState({ ...state, qoderDailyDone: memo, deviceClaim });
+  if (accounts.length) {
+    await withAccounts((all) => {
+      for (const updated of accounts) {
+        const current = all.find((a) => a.id === updated.id);
+        if (!current) continue;
+        current.lastCheckin = updated.lastCheckin;
+        if (updated.lastResult) current.lastResult = updated.lastResult;
+        if (updated.uid && !current.uid) current.uid = updated.uid;
+      }
+    });
+    await saveState({ ...state, qoderDailyDone: memo, deviceClaim });
+  }
 
-  // ZCode 活动自动领取：每轮签到后顺带轮询（preview 为空时零请求副作用；需开关打开）。
-  // 桌面版已注册隐藏窗口验证码提供者，可静默过验证码；其它环境需要验证码时标记「需手动领取」。
-  for (const za of zAccounts) {
-    const label = za.name || za.uid || za.id;
-    try {
-      const r = await zcodeAutoClaim(za);
-      if (!r) continue;
-      results.push({ accountId: za.id, account: label, provider: 'zcode', status: r.status, message: r.message });
-      const lastResult = { status: r.status, message: r.message, amount: 0, at: new Date().toISOString() };
-      await withAccounts((list) => {
-        const cur = list.find((a) => a.id === za.id);
-        if (cur) cur.lastResult = lastResult;
-      });
-    } catch (e) {
-      logger.warn('ZCODE-CLAIM', `${label} 自动领取异常：${e.message}`);
-    }
+  if (zAccounts.length) {
+    const zResult = await runZcodeTick(new Set(zAccounts.map((a) => a.id)));
+    results.push(...zResult.results);
   }
 
   const claimed = results.filter((r) => r.status === 'checked-in');
@@ -186,45 +288,46 @@ async function runTickInner(opts) {
   const none = results.filter((r) => r.status === 'no-activity');
   const limited = results.filter((r) => r.status === 'limited');
   const already = results.length - claimed.length - failed.length - none.length - limited.length;
-  const totalCredits = claimed.reduce((s, r) => s + (r.claimedAmount || 0), 0);
+  const totalCredits = claimed.reduce((sum, r) => sum + (r.claimedAmount || 0), 0);
   const summary = `签到汇总：成功 ${claimed.length}（+${totalCredits} Credits）、已领 ${already}`
     + (limited.length ? `、本机限领 ${limited.length}` : '')
     + `、无活动 ${none.length}、失败 ${failed.length}`;
   logger.info('CHECKIN', summary);
   lastTick = { at: new Date().toISOString(), summary };
-
   return { results, summary };
 }
 
-/** 启动定时签到（每 ~2h 一轮，当天已成功的账号自动跳过） */
+/** 启动普通签到调度与 ZCode 独立轮询调度。 */
 export function startScheduler() {
   if (timerHandle) return;
-  startUsageSyncScheduler();   // 10Router 用量同步（未配置 / 未开启时不做任何事）
-  warmZcodeAppVersion();       // 后台预热 ZCode 客户端版本探测（Windows 注册表，避免首个请求同步阻塞）
+  startUsageSyncScheduler();
+  warmZcodeAppVersion();
   const scheduleNext = () => {
     const delay = msUntilNextTick();
     nextTickAt = new Date(Date.now() + delay).toISOString();
     timerHandle = setTimeout(async () => {
       try {
-        await runCheckinTick({ skipIfCheckedToday: true });
+        await runCheckinTick({ skipIfCheckedToday: true, includeZcode: false });
       } catch (err) {
         logger.error('CHECKIN', `定时轮失败：${err?.message || err}`);
       } finally {
         scheduleNext();
       }
     }, delay);
-    if (timerHandle.unref) timerHandle.unref();
+    timerHandle.unref?.();
     logger.info('CHECKIN', `定时签到已启动，下次执行约 ${Math.round(delay / 60000)} 分钟后`);
   };
   scheduleNext();
-  // 启动后 15 秒先跑一轮引导签到
+  syncZcodeScheduler();
   setTimeout(() => {
-    runCheckinTick({ skipIfCheckedToday: true }).catch((e) =>
-      logger.error('CHECKIN', `引导轮失败：${e?.message || e}`));
+    runCheckinTick({ skipIfCheckedToday: true, includeZcode: false }).catch((err) =>
+      logger.error('CHECKIN', `引导轮失败：${err?.message || err}`));
   }, 15000).unref?.();
 }
 
 export function stopScheduler() {
-  if (timerHandle) { clearTimeout(timerHandle); timerHandle = null; }
+  if (timerHandle) clearTimeout(timerHandle);
+  timerHandle = null;
   nextTickAt = null;
+  clearZcodeTimers();
 }
