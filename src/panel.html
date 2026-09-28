@@ -486,7 +486,7 @@
     <div class="field" style="margin-top:12px"><label>10Router 地址</label><input class="input mono" id="tr-endpoint" placeholder="http://127.0.0.1:20128 或 http://nas:20128"></div>
     <div class="field"><label>虚拟 key</label><input class="input mono" id="tr-key" placeholder="sk-…" autocomplete="off"></div>
     <div class="field"><label>用量同步（同 10router-sync 插件）</label>
-      <div><label class="check"><input type="checkbox" id="tr-auto"> 每小时自动同步本机用量到 10Router</label></div>
+      <div><label class="check"><input type="checkbox" id="tr-auto"> 每 10 分钟自动同步本机用量到 10Router</label></div>
       <div id="tr-sources" style="margin-top:6px"></div>
       <div class="hint" style="margin-top:4px">ZCode 只同步官方渠道；经 10Router 中转的 mirasim 调用会跳过，避免重复计数。10Router 按行签名去重，重复同步不会产生重复数据。</div>
     </div>
@@ -1647,7 +1647,7 @@ function trSetupHtml() {
   return '<div class="setup"><h3>接入 10Router</h3>'
     + '<div class="hint">填 10Router 的地址和一个<b>虚拟 key</b>（10Router 仪表盘 → API Keys 创建的 sk-…），就能在这里：</div>'
     + '<div class="hint" style="margin:6px 0 12px">· 查看 10Router 里其他供应商（Claude / Codex / Kiro / GLM …）的额度卡片（需要 10Router 1.2.1+）<br>'
-    + '· 把本机 ZCode / OpenCode / mirasim / 小米 MiMo 的用量同步进 10Router 的用量统计（同 10router-sync 插件，自动每小时一次）</div>'
+    + '· 把本机 ZCode / OpenCode / mirasim / 小米 MiMo 的用量同步进 10Router 的用量统计（同 10router-sync 插件，自动每 10 分钟一次）</div>'
     + '<button class="btn primary" data-tr="settings">' + I.plus + '配置 10Router</button></div>';
 }
 
@@ -1716,7 +1716,7 @@ function renderTenrouter() {
     + '<button class="btn" data-tr="settings">设置</button>'
     + '</div></div>'
     + '<div class="tr-bar"><span title="' + esc(c.endpoint) + '">' + esc(c.endpoint) + ' · ' + esc(c.keyMasked) + '</span>'
-    + '<span>用量同步：' + (c.sync.enabled ? '每小时自动' : '手动') + '</span>' + srcChips
+    + '<span>用量同步：' + (c.sync.enabled ? '每 10 分钟自动' : '手动') + '</span>' + srcChips
     + '<span style="margin-left:auto" title="' + esc(ls ? ls.summary : '') + '">' + (ls ? '上次同步 ' + esc(fmtTime(ls.at).slice(5)) + ' · ' + esc(ls.summary.slice(0, 40)) : '还没有同步过') + '</span>'
     + (tr.quotas ? '<span>额度更新于 ' + esc(fmtTime(tr.quotas.generatedAt).slice(11)) + '</span>' : '')
     + '</div>'
