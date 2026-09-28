@@ -20,7 +20,7 @@ const QUOTA_TIMEOUT_MS = 90_000;   // 10Router 端并发查询全部供应商，
 const IMPORT_TIMEOUT_MS = 120_000;
 const BATCH = 5000;
 const SYNC_INTERVAL_MS = 60 * 60 * 1000;
-const DEFAULT_CONFIG = { endpoint: '', key: '', sync: { enabled: false, sources: [...SOURCES] }, syncState: {}, lastSync: null };
+const DEFAULT_CONFIG = { endpoint: '', key: '', adminPassword: '', sync: { enabled: false, sources: [...SOURCES] }, syncState: {}, lastSync: null };
 
 export function loadConfig() {
   try {
@@ -62,6 +62,7 @@ export async function publicConfig() {
     configured: isConfigured(c),
     endpoint: c.endpoint,
     keyMasked: maskKey(c.key),
+    hasAdminPassword: Boolean(c.adminPassword),
     sync: c.sync,
     lastSync: c.lastSync,
     syncing: Boolean(syncing),
@@ -70,7 +71,7 @@ export async function publicConfig() {
 }
 
 /** 更新配置：key 留空表示保持原值；endpoint 为空 = 清除整个配置 */
-export function updateConfig({ endpoint, key, syncEnabled, sources } = {}) {
+export function updateConfig({ endpoint, key, adminPassword, syncEnabled, sources } = {}) {
   return withConfig((c) => {
     if (endpoint !== undefined) {
       c.endpoint = normalizeEndpoint(endpoint);
@@ -81,6 +82,7 @@ export function updateConfig({ endpoint, key, syncEnabled, sources } = {}) {
       if (/\s/.test(k)) throw new Error('key 不能包含空白字符');
       c.key = k;
     }
+    if (typeof adminPassword === 'string' && adminPassword) c.adminPassword = adminPassword;
     if (typeof syncEnabled === 'boolean') c.sync.enabled = syncEnabled;
     if (Array.isArray(sources)) c.sync.sources = sources.filter((s) => SOURCES.includes(s));
   });

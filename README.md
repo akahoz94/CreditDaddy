@@ -77,6 +77,7 @@
 在面板「10Router」标签页配置 10Router 服务地址与仪表盘创建的 **虚拟 key**（sk-…）。Key 仅存储于本地 `tenrouter.json`（0600 权限），面板只显示脱敏值。
 
 - **供应商额度卡片（10Router 1.2.1+）**：通过 `GET /api/usage/quotas` 一键读取 10Router 中其他供应商（CodeBuddy / Qoder / Claude / GLM 等）的额度卡片。CodeBuddy / Qoder / GLM 会自动标明**国内版 / 国际版**，当额度不足 10% 时自动标红并推送到仪表盘「需要处理」。支持 5 分钟连接级缓存与手动强制刷新。
+- **账号同步（一键推送为 10Router 连接）**：把本机 Qoder / WorkBuddy 账号直接推为 10Router 上游连接。配置 10Router 面板密码后走 **OAuth 通道**（accessToken + refreshToken，10R 端按身份去重并原位更新、自动续期，反复同步幂等）；仅配虚拟 key 时走 **apikey 通道**（同名连接不覆盖，token 过期后需重新同步）。zcode → GLM 映射待反代就绪后补充（映射表已留接口）。
 - **用量自动同步（10Router 1.0.7+）**：内置与 10router-sync 插件一致的同步逻辑，支持一键或每小时自动同步本机 ZCode（`db.sqlite` 官方渠道）、OpenCode（`opencode.db`）、mirasim（`usage-*.ndjson`）、小米 MiMo（`mimocode.db`）的真实用量，以及**妙手（CatPaw）云端用量**（`v1/usage/token/daily` 按天 token 总量；当天桶隔天入账，云端无输入/输出拆分、整包计入输入，模型列默认 `unknown`，可在 `tenrouter.json` 的 `sync.catpawModel` 标注）至 10Router 统计。支持断点续传与 2 天重叠补偿，服务端校验签名去重。
 - *注：读取 SQLite 依赖 Node 22.5+ 内置的 `node:sqlite`（桌面版与 fnOS nodejs_v24 环境原生支持）。*
 
@@ -185,6 +186,7 @@ creditdaddy help                    # 查看完整命令行帮助
 | `GET` | `/api/tenrouter/quotas` | 获取 10Router 聚合的外部供应商配额总览 |
 | `GET` | `/api/tenrouter/health` | 检查 10Router 服务端自身健康状态 |
 | `POST` | `/api/tenrouter/sync` | 立即触发本机模型用量向 10Router 同步 |
+| `POST` | `/api/tenrouter/sync-accounts` | 把本机账号推送到 10Router 连接 `{adminPassword?}`（OAuth / apikey 双通道） |
 | `GET` / `POST` | `/api/qoder/umid` | 获取 / 一键安装 Linux 平台 Qoder 设备身份组件 |
 | `GET` | `/api/logs` | 查看环形内存日志 |
 | `POST` | `/api/export` / `/api/import` | 账号数据安全加密导出与导入 |
@@ -234,6 +236,7 @@ CreditDaddy/
 │   ├── qoderUmid.js            # UMID 设备组件提取与运行
 │   ├── store.js                # 0600 本机原子化配置存储引擎
 │   ├── tenrouter.js            # 10Router 配额查询与调度
+│   ├── tenrouterAccounts.js    # 账号一键推送为 10Router 连接（OAuth / apikey 双通道）
 │   ├── transfer.js             # 加密备份导入导出
 │   ├── usageSync.js            # 本地多模型 SQLite 用量抽取
 │   ├── workbuddyAuth.js        # WorkBuddy 授权流程

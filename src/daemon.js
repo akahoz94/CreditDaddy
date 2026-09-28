@@ -28,6 +28,7 @@
  *   GET    /api/tenrouter/quotas       10Router 其他供应商额度总览（?force=1 跳过缓存）
  *   GET    /api/tenrouter/health       10Router 自身健康（/api/health 转发：ok / driver / lastDriverError）
  *   POST   /api/tenrouter/sync         立即同步本机用量到 10Router {dryRun?}
+ *   POST   /api/tenrouter/sync-accounts 把本机账号推送到 10Router 连接（OAuth 通道需已配面板密码）
  *   GET    /api/qoder/umid             Qoder 设备身份组件状态（Linux / fnOS）
  *   POST   /api/qoder/umid/install     下载官方 qodercli 并提取设备身份组件
  *   GET    /api/logs                   最近日志
@@ -57,6 +58,7 @@ import { liveToAccount as mirasimLiveAccount, switchTo as mirasimSwitchTo, curre
 import { liveToAccount as catpawLiveAccount, switchTo as catpawSwitchTo, currentCatpawToken, detectCatpaw, terminateCatpaw } from './catpawLocal.js';
 import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, autoClaimUntil, setAutoClaimEnabled } from './zcodeClient.js';
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
+import { syncAccountsTo10r } from './tenrouterAccounts.js';
 import { runCheckinTick, getSchedulerInfo, dayKey, enableZcodeAutoClaimForOneHour, refreshZcodeScheduler, pollZcodeNow } from './checkin.js';
 import { detectQoderApps, readQoderAppAccounts, riskIdentityAvailable, riskIdentitySource } from './qoderApp.js';
 import { umidInfo, installUmid } from './qoderUmid.js';
@@ -559,7 +561,7 @@ async function handleApi(req, res, url) {
   if (p === '/api/tenrouter' && method === 'PUT') {
     const body = await readBody(req).catch(() => ({}));
     try {
-      await tenrouter.updateConfig({ endpoint: body?.endpoint, key: body?.key, syncEnabled: body?.syncEnabled, sources: body?.sources });
+      await tenrouter.updateConfig({ endpoint: body?.endpoint, key: body?.key, adminPassword: body?.adminPassword, syncEnabled: body?.syncEnabled, sources: body?.sources });
       return json(res, 200, await tenrouter.publicConfig());
     } catch (e) { return json(res, 400, { error: e.message }); }
   }
@@ -589,6 +591,17 @@ async function handleApi(req, res, url) {
     const body = await readBody(req).catch(() => ({}));
     try {
       return json(res, 200, await tenrouter.runUsageSync({ dryRun: body?.dryRun === true }));
+    } catch (e) { return json(res, e.code === 'NOT_CONFIGURED' ? 409 : 500, { error: e.message, code: e.code }); }
+  }
+  if (p === '/api/tenrouter/sync-accounts' && method === 'POST') {
+    const body = await readBody(req).catch(() => ({}));
+    try {
+      // 请求里带了面板密码就先落盘（下次同步不必重填），否则用已保存的
+      if (typeof body?.adminPassword === 'string' && body.adminPassword) {
+        await tenrouter.updateConfig({ adminPassword: body.adminPassword });
+      }
+      const c = tenrouter.loadConfig();
+      return json(res, 200, await syncAccountsTo10r({ endpoint: c.endpoint, key: c.key, adminPassword: c.adminPassword, accounts: await loadAccounts() }));
     } catch (e) { return json(res, e.code === 'NOT_CONFIGURED' ? 409 : 500, { error: e.message, code: e.code }); }
   }
 

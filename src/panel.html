@@ -485,6 +485,10 @@
     <div class="hint">填 10Router 的访问地址和仪表盘里创建的<b>虚拟 key（sk-…）</b>。key 只保存在 CreditDaddy 守护进程的数据目录（0600），面板里只显示脱敏值。</div>
     <div class="field" style="margin-top:12px"><label>10Router 地址</label><input class="input mono" id="tr-endpoint" placeholder="http://127.0.0.1:20128 或 http://nas:20128"></div>
     <div class="field"><label>虚拟 key</label><input class="input mono" id="tr-key" placeholder="sk-…" autocomplete="off"></div>
+    <div class="field"><label>10Router 面板密码（可选）</label><input class="input mono" id="tr-admin-pw" type="password" placeholder="配置后「同步账号」走 OAuth 通道（带 refreshToken 自动续期）；留空保持不变" autocomplete="new-password"></div>
+    <div class="field"><label>账号同步</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" id="tr-sync-accounts">同步账号到 10R</button><span class="hint">把本机 Qoder / WorkBuddy 账号推为 10Router 上游连接；zcode 待反代就绪后支持</span></div>
+    </div>
     <div class="field"><label>用量同步（同 10router-sync 插件）</label>
       <div><label class="check"><input type="checkbox" id="tr-auto"> 每小时自动同步本机用量到 10Router</label></div>
       <div id="tr-sources" style="margin-top:6px"></div>
@@ -1774,6 +1778,8 @@ function openTrSettings() {
   $('tr-endpoint').value = c.endpoint || '';
   $('tr-key').value = '';
   $('tr-key').placeholder = c.keyMasked ? '已保存 ' + c.keyMasked + '（留空保持不变）' : 'sk-…';
+  $('tr-admin-pw').value = '';
+  $('tr-admin-pw').placeholder = c.hasAdminPassword ? '已保存（留空保持不变）' : '可选：10Router 面板密码';
   $('tr-auto').checked = c.configured ? c.sync.enabled : true;
   $('tr-hide-empty').checked = state.trHideEmpty === true;
   $('tr-sources').innerHTML = (c.sources || []).map((x) => '<label class="check"><input type="checkbox" data-src="' + x.id + '"'
@@ -1823,6 +1829,19 @@ async function trDisconnect() {
   try { tr.config = await api('/api/tenrouter', { method: 'DELETE' }); tr.quotas = null; tr.error = null; closeModal('m-10r'); render(); }
   catch (e) { toast(e.message, false); }
 }
+async function trSyncAccounts() {
+  if (!(tr.config && tr.config.configured)) return toast('请先保存 10Router 设置', false);
+  const btn = $('tr-sync-accounts');
+  const pw = $('tr-admin-pw').value;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/tenrouter/sync-accounts', { method: 'POST', json: pw ? { adminPassword: pw } : {} });
+    toast(r.summary, !/失败/.test(r.summary));
+    if (pw) await loadTrConfig();
+    loadLogs();
+  } catch (e) { toast(e.message, false); }
+  btn.disabled = false;
+}
 $('tr-panel').addEventListener('click', (e) => {
   const b = e.target.closest('[data-tr]');
   if (!b) return;
@@ -1838,6 +1857,7 @@ $('tr-panel').addEventListener('click', (e) => {
   }
 });
 $('tr-test').onclick = trTest;
+$('tr-sync-accounts').onclick = trSyncAccounts;
 $('tr-save').onclick = trSave;
 $('tr-disconnect').onclick = trDisconnect;
 

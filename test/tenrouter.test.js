@@ -23,7 +23,7 @@ function mockFetch(handler) {
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url: String(url), init, body: init.body ? JSON.parse(init.body) : null });
     const r = await handler(String(url), init);
-    return new Response(r.body === undefined ? '' : JSON.stringify(r.body), { status: r.status || 200 });
+    return new Response(r.body === undefined ? '' : JSON.stringify(r.body), { status: r.status || 200, headers: r.headers });
   };
   return { calls, restore: () => { globalThis.fetch = orig; } };
 }
@@ -223,5 +223,85 @@ test('妙手云端用量：当天桶与 0 token 天不入账，单账号失败�
     const catpaw = d.find((x) => x.id === 'catpaw');
     assert.equal(catpaw.found, true);
     assert.equal(catpaw.files, 2);
+  } finally { m.restore(); }
+});
+
+// ── 账号同步到 10Router 连接 ──
+
+const ta = await import('../src/tenrouterAccounts.js');
+const { openTransfer } = await import('../src/transfer.js');
+
+test('账号同步映射表：qoder / WorkBuddy 系列映射，zcode 等留待后续', () => {
+  assert.equal(ta.mapProviderId('qoder'), 'qoder');
+  assert.equal(ta.mapProviderId('qoder-cn'), 'qoder-cn');
+  assert.equal(ta.mapProviderId('workbuddy'), 'codebuddy-cn');
+  assert.equal(ta.mapProviderId('workbuddy-intl'), 'codebuddy-intl');
+  assert.equal(ta.mapProviderId('zcode'), null);
+  assert.equal(ta.mapProviderId('mirasim'), null);
+  assert.equal(ta.mapProviderId('catpaw'), null);
+});
+
+test('账号同步：apikey 通道逐账号建连接，同名 409 记已存在，无映射产品跳过', async () => {
+  const m = mockFetch((url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.name === 'B') return { status: 409, body: { error: 'exists' } };
+    return { status: 201, body: { connection: { id: 'x' } } };
+  });
+  try {
+    const r = await ta.syncAccountsTo10r({
+      endpoint: 'http://127.0.0.1:20127', key: 'sk-x',
+      accounts: [
+        { id: '1', provider: 'qoder', token: 't1', name: 'A' },
+        { id: '2', provider: 'qoder', token: 't2', name: 'B' },
+        { id: '3', provider: 'zcode', token: 't3', name: 'Z' },
+      ],
+    });
+    assert.equal(r.channel, 'apikey');
+    assert.equal(r.results.length, 1);
+    assert.equal(r.results[0].imported, 1);
+    assert.equal(r.results[0].skipped, 1);
+    assert.match(r.summary, /apikey 通道/);
+    assert.match(r.summary, /跳过 zcode ×1/);
+    assert.deepEqual(m.calls.map((c) => JSON.parse(c.init.body).provider), ['qoder', 'qoder']);
+    assert.equal(m.calls[0].init.headers.Authorization, 'Bearer sk-x');
+  } finally { m.restore(); }
+});
+
+test('账号同步：OAuth 通道登录换会话，transfer 分组推送完整凭据', async () => {
+  const seen = [];
+  const m = mockFetch((url, init) => {
+    seen.push({ url: String(url), init });
+    if (String(url).endsWith('/api/auth/login')) {
+      return { status: 200, body: { success: true }, headers: { 'set-cookie': 'auth_token=abc123; Path=/; HttpOnly' } };
+    }
+    if (String(url).endsWith('/api/auth/logout')) return { status: 200, body: { success: true } };
+    return { status: 200, body: { imported: 1, updated: 1, skipped: 0, failed: 0 } };
+  });
+  try {
+    const r = await ta.syncAccountsTo10r({
+      endpoint: 'http://127.0.0.1:20127', key: 'sk-x', adminPassword: 'pw-1',
+      accounts: [
+        { id: '1', provider: 'workbuddy', token: 'tok-a', refreshToken: 'rf-a', name: 'W1', email: 'a@x' },
+        { id: '2', provider: 'workbuddy-intl', token: 'tok-b', refreshToken: 'rf-b', name: 'W2' },
+      ],
+    });
+    assert.equal(r.channel, 'oauth');
+    assert.deepEqual(r.results.map((x) => x.provider), ['codebuddy-cn', 'codebuddy-intl']);
+    assert.match(r.summary, /OAuth 通道/);
+    assert.match(r.summary, /导入 2/);
+    assert.match(r.summary, /更新 2/);
+
+    const login = seen.find((s) => s.url.endsWith('/api/auth/login'));
+    assert.equal(JSON.parse(login.init.body).password, 'pw-1');
+    const imports = seen.filter((s) => s.url.endsWith('/api/oauth/transfer/import'));
+    assert.equal(imports.length, 2);
+    for (const s of imports) {
+      assert.equal(s.init.headers.Cookie, 'auth_token=abc123');
+      const body = JSON.parse(s.init.body);
+      const payload = openTransfer(body.blob, body.passphrase);
+      assert.equal(payload.accounts[0].refreshToken, body.provider === 'codebuddy-cn' ? 'rf-a' : 'rf-b');
+      assert.ok(payload.accounts[0].accessToken);
+    }
+    assert.ok(seen.some((s) => s.url.endsWith('/api/auth/logout')));
   } finally { m.restore(); }
 });
