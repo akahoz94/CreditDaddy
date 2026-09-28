@@ -171,3 +171,57 @@ test('OpenCode 来源：1 小时内仍在更新的会话暂不同步（需要 no
   assert.deepEqual(r.entries.map((e) => e.meta.opencodeSessionId), ['s-done']);
   assert.match(r.notes[0], /暂不同步 1 个进行中的会话/);
 });
+
+// ── 妙手（CatPaw）云端用量 ──
+
+function writeAccounts(list) {
+  fs.mkdirSync(process.env.CREDITDADDY_HOME, { recursive: true });
+  fs.writeFileSync(path.join(process.env.CREDITDADDY_HOME, 'accounts.json'), JSON.stringify(list));
+}
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+test('妙手云端用量：按天聚合行的口径与本地正午锚点', () => {
+  const acc = { id: 'acc-1', name: '主号', provider: 'catpaw', token: 'tok-1' };
+  const row = us.convertCatpawDaily('2026-09-27', 12345, acc);
+  assert.equal(row.provider, 'catpaw-catx');
+  assert.equal(row.model, 'unknown');
+  assert.equal(row.connectionId, 'catpaw-acc-1');   // 参与 10R 行签名，分账号去重
+  assert.deepEqual(row.tokens, { prompt_tokens: 12345, completion_tokens: 0 });   // 云端无拆分，整包记输入
+  assert.equal(row.cost, 0);
+  const d = new Date(row.timestamp);
+  assert.equal(d.getFullYear(), 2026);
+  assert.equal(d.getMonth(), 8);
+  assert.equal(d.getDate(), 27);
+  assert.equal(us.convertCatpawDaily('2026-09-27', 1, acc, 'GLM-5.3-FlashX').model, 'GLM-5.3-FlashX');
+});
+
+test('妙手云端用量：当天桶与 0 token 天不入账，单账号失败不拖垮整轮', async () => {
+  const todayKey = dayKey();
+  const yKey = dayKey(new Date(Date.now() - 86400e3));
+  writeAccounts([
+    { id: 'acc-1', name: '主号', provider: 'catpaw', token: 'tok-1' },
+    { id: 'acc-2', name: '小号', provider: 'catpaw', token: 'tok-2' },
+    { id: 'q1', provider: 'qoder', token: 'x' },
+  ]);
+  const m = mockFetch((url, init) => {
+    if (init.headers['X-Auth-Token'] === 'tok-2') return { status: 401, body: { code: 401, message: '未登录', data: null } };
+    return { body: { code: 0, message: 'success', data: { daily: [
+      { date: yKey, totalTokens: 100 },
+      { date: todayKey, totalTokens: 999 },        // 当天桶随用随涨，隔天再入账
+      { date: dayKey(new Date(Date.now() - 3 * 86400e3)), totalTokens: 0 },
+    ] }, errorCode: null } };
+  });
+  try {
+    const r = await us.collectSource('catpaw', { catpawModel: 'GLM-5.3-FlashX' });
+    assert.equal(r.files, 2);
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.entries[0].tokens.prompt_tokens, 100);
+    assert.equal(r.entries[0].model, 'GLM-5.3-FlashX');
+    assert.match(r.notes[0], /1 个妙手账号用量拉取失败/);
+
+    const d = await us.detectSources();
+    const catpaw = d.find((x) => x.id === 'catpaw');
+    assert.equal(catpaw.found, true);
+    assert.equal(catpaw.files, 2);
+  } finally { m.restore(); }
+});

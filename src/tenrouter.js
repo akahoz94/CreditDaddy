@@ -1,7 +1,7 @@
 /**
  * 10Router 集成：用 10Router 仪表盘的虚拟 key（sk-…）
  *   1. 读取 10Router 其他供应商的额度总览（GET /api/usage/quotas，10Router 1.2.1+）
- *   2. 把本机 ZCode / OpenCode / mirasim / 小米 MiMo 的用量同步进 10Router 的用量统计
+ *   2. 把本机 ZCode / OpenCode / mirasim / 小米 MiMo 的用量与妙手（CatPaw）云端用量同步进 10Router 的用量统计
  *      （POST /api/settings/database/import-usage，与 10router-sync 插件同一接口，10Router 1.0.7+）
  *
  * 配置存 ~/.creditdaddy/tenrouter.json（0600，含 key，不随账号导出）；
@@ -171,7 +171,7 @@ async function doSync({ dryRun, trigger }) {
   for (const id of c.sync.sources) {
     const label = SOURCE_LABEL[id];
     try {
-      const { entries, notes, files } = await collectSource(id, { endpoint: c.endpoint });
+      const { entries, notes, files } = await collectSource(id, { endpoint: c.endpoint, catpawModel: c.sync.catpawModel });
       if (!files) { results.push({ source: id, label, status: 'absent' }); continue; }
       const { selected, maxTs } = selectSince(entries, c.syncState[id]?.lastTs);
       if (dryRun || !selected.length) {

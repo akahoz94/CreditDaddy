@@ -90,3 +90,14 @@ export async function fetchCatpawQuota(account) {
   if (!account.token) throw new Error('账号缺少 token');
   return normalizeCatpawBalance(await gwGet('/credit/balance', account.token));
 }
+
+/**
+ * 云端用量（按天 token 总量，无输入/输出/缓存拆分、无模型维度）：
+ *   GET /api/gateway/v1/usage/token/daily?startTime=&endTime=   → { daily: [{ date: 'YYYY-MM-DD', totalTokens }] }
+ * 当天的桶随用随涨，调用方应只取已结束的日期，避免同一天反复快照产生重复行。
+ */
+export async function fetchCatpawTokenDaily(token, { startTime, endTime } = {}) {
+  if (!token) throw new Error('账号缺少 token');
+  const d = await gwGet(`/v1/usage/token/daily?startTime=${startTime}&endTime=${endTime}`, token);
+  return Array.isArray(d && d.daily) ? d.daily : [];
+}

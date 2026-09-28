@@ -573,13 +573,20 @@ const COMPONENTS = [
   { id: 'tenrouter', label: '10Router' },
 ];
 const HIDDEN_COMP_KEY = 'qd_hidden_components';
+const DEFAULT_HIDDEN_COMP = ['catpaw'];   // 妙手默认收起，右上角设置里可打开
 state.hidden = (() => {
+  let list = DEFAULT_HIDDEN_COMP;
+  const raw = localStorage.getItem(HIDDEN_COMP_KEY);
+  if (raw !== null) { try { list = JSON.parse(raw) || []; } catch { list = []; } }
+  // 一次性迁移：旧偏好是在「妙手默认隐藏」之前存的，补上默认值；此后完全尊重手动选择
+  if (raw !== null && localStorage.getItem('qd_hidden_comp_migrated') !== '1') {
+    list = [...new Set([...list, ...DEFAULT_HIDDEN_COMP])];
+    try { localStorage.setItem('qd_hidden_comp_migrated', '1'); } catch {}
+  }
   const set = new Set();
-  try {
-    for (const v of JSON.parse(localStorage.getItem(HIDDEN_COMP_KEY) || '[]')) {
-      if (COMPONENTS.some((c) => c.id === v)) set.add(v);
-    }
-  } catch {}
+  for (const v of list) {
+    if (COMPONENTS.some((c) => c.id === v)) set.add(v);
+  }
   return set;
 })();
 const compVisible = (id) => !state.hidden.has(id);

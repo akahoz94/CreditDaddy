@@ -7,6 +7,8 @@
  *   opencode  ~/.local/share/opencode/opencode.db 的 session
  *   mirasim   ~/.mirasim/insights/usage-YYYY-MM.ndjson（跳过经 10Router 中转的调用）
  *   mimo      ~/.local/share/mimocode/mimocode.db 的 message（assistant 轮次）
+ *   catpaw    妙手云端用量（catx 网关 /v1/usage/token/daily，按天 token 总量；
+ *             无输入/输出拆分，整包记 prompt_tokens；当天桶隔天再入账）
  * 行结构与插件一致（provider 前缀 zcode- / opencode- / mirasim- / mimo-，cost 记 0 或源值），
  * 10Router 按行签名去重，重复同步不会产生重复数据。
  *
@@ -18,9 +20,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { loadAccounts } from './store.js';
+import { fetchCatpawTokenDaily } from './catpawClient.js';
 
-export const SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo'];
-export const SOURCE_LABEL = { zcode: 'ZCode', opencode: 'OpenCode', mirasim: 'mirasim', mimo: '小米 MiMo' };
+export const SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo', 'catpaw'];
+export const SOURCE_LABEL = { zcode: 'ZCode', opencode: 'OpenCode', mirasim: 'mirasim', mimo: '小米 MiMo', catpaw: '妙手' };
 const OVERLAP_MS = 2 * 86400e3;
 
 let sqliteMod;
@@ -67,11 +71,12 @@ export function sourcePaths(home = os.homedir(), env = process.env, platform = p
 export async function detectSources() {
   const p = sourcePaths();
   const sqlite = await sqliteAvailable();
+  const catpawAccounts = (await loadAccounts()).filter((a) => a.provider === 'catpaw' && a.token).length;
   return SOURCES.map((id) => ({
     id, label: SOURCE_LABEL[id],
-    found: p[id].length > 0,
-    files: p[id].length,
-    supported: id === 'mirasim' || sqlite,
+    found: id === 'catpaw' ? catpawAccounts > 0 : p[id].length > 0,
+    files: id === 'catpaw' ? catpawAccounts : p[id].length,
+    supported: id === 'mirasim' || id === 'catpaw' || sqlite,
   }));
 }
 
@@ -196,6 +201,57 @@ export function convertMirasimRow(e) {
   };
 }
 
+/**
+ * 妙手（CatPaw）云端按天用量 → 行。
+ * 云端只有一个总数（无输入/输出/缓存拆分、无模型维度），整包记入 prompt_tokens
+ * （LLM 负载输入占大头，这样拆分偏差最小）；成本记 0（套餐制，与 zcode 官方渠道同口径）。
+ * connectionId 参与 10Router 行签名，用它区分多账号，避免同日同量互相去重。
+ */
+export function convertCatpawDaily(date, totalTokens, account, modelLabel = 'unknown') {
+  const [y, m, d] = String(date).split('-').map(Number);
+  const ts = new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);   // 本地正午锚点：任何时区都落在当天
+  return {
+    timestamp: ts.toISOString(),
+    provider: 'catpaw-catx',
+    model: modelLabel,
+    connectionId: 'catpaw-' + account.id,
+    apiKey: null,
+    endpoint: 'catpaw://daily',
+    cost: 0,
+    status: 'ok',
+    tokens: { prompt_tokens: totalTokens, completion_tokens: 0 },
+    meta: {
+      source: 'catpaw', aggregate: 'daily', unsplitTokens: true, planUsage: true,
+      catpawAccountId: account.id, accountName: account.name || null, date, totalTokens,
+    },
+  };
+}
+
+const localDateKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** 妙手云端用量：逐账号拉按天 token 总量（当天桶不完整，留到隔天再入账） */
+async function collectCatpaw(accounts, modelLabel) {
+  const out = [];
+  const notes = [];
+  const now = Date.now();
+  const todayKey = localDateKey();
+  let failed = 0, lastErr = null;
+  for (const a of accounts) {
+    try {
+      const daily = await fetchCatpawTokenDaily(a.token, { startTime: now - 400 * 86400e3, endTime: now });
+      for (const d of daily) {
+        if (!d || !d.date || !(Number(d.totalTokens) > 0)) continue;
+        if (d.date >= todayKey) continue;
+        out.push(convertCatpawDaily(d.date, Number(d.totalTokens), a, modelLabel));
+      }
+    } catch (e) { failed++; lastErr = e; }
+  }
+  if (failed && !out.length) throw lastErr;
+  if (failed) notes.push(`${failed} 个妙手账号用量拉取失败：${lastErr && lastErr.message}`);
+  out.sort((x, y) => (x.timestamp < y.timestamp ? -1 : 1));
+  return { entries: out, notes };
+}
+
 // ── 读取 ──
 
 function withSnapshot(dbPath, fn) {
@@ -293,7 +349,13 @@ function collectMirasim(files, endpoint) {
 }
 
 /** 读取某来源的全部行：{ entries, notes, files }；来源不存在返回 entries=[] */
-export async function collectSource(id, { endpoint, paths = sourcePaths() } = {}) {
+export async function collectSource(id, { endpoint, paths = sourcePaths(), catpawModel } = {}) {
+  if (id === 'catpaw') {
+    const accounts = (await loadAccounts()).filter((a) => a.provider === 'catpaw' && a.token);
+    if (!accounts.length) return { entries: [], notes: [], files: 0 };
+    const r = await collectCatpaw(accounts, catpawModel || 'unknown');
+    return { ...r, files: accounts.length };
+  }
   const files = paths[id] || [];
   if (!files.length) return { entries: [], notes: [], files: 0 };
   if (id !== 'mirasim' && !(await sqliteAvailable())) throw new Error('需要 Node 22.5+（node:sqlite）才能读取 ' + SOURCE_LABEL[id] + ' 的数据库');
