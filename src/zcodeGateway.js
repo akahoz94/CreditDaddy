@@ -280,58 +280,6 @@ export async function handleGateway(req, res) {
       continue;
     }
 
-    // 整链委托：真 Chromium 页内「求解 + 同源补全」一条龙（优先）
-    if (completionProvider) {
-      const cfg = await fetchCaptchaConfig().catch(() => null);
-      if (!cfg || !cfg.enabled) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: '验证码配置不可用' }));
-      }
-      let token;
-      try { token = claimToken(account); } catch (e) {
-        attempted.push({ account: label, ok: false, error: e.message });
-        markDead(account.id);
-        continue;
-      }
-      // 客户端身份面：ZCode/{ver} + SDK UA 后缀 + 全套 X-ZCode/X-Client 头 + 会话追踪
-      const identity = await zaiHeaders(token, account.meta?.deviceMid);
-      identity['User-Agent'] = `${identity['User-Agent']} ai-sdk/anthropic/3.0.81`;
-      identity['anthropic-version'] = '2023-06-01';
-      identity['accept-encoding'] = 'gzip';
-      identity['x-zcode-session-type'] = 'main';
-      identity['x-zcode-trace-id'] = crypto.randomUUID();
-      identity['X-Aliyun-Captcha-Verify-Region'] = cfg.region || '';
-      let r;
-      try {
-        r = await completionProvider({ captchaCfg: cfg, jwt: token, rawBody, headers: identity });
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        attempted.push({ account: label, ok: false, error: e.message });
-        continue;
-      }
-      if (r.status >= 400 && isCaptchaError(r.status, r.body)) {
-        attempted.push({ account: label, ok: false, error: `验证码被拒（${r.status}）`, captcha: true });
-        logger.warn('ZCODE-GW', `${label} 页内整链被拒（${r.status}），重试`);
-        continue;
-      }
-      if (r.status >= 400 && isAuthError(r.status, r.body)) {
-        markDead(account.id);
-        attempted.push({ account: label, ok: false, error: 'JWT 已失效，账号拉黑' });
-        continue;
-      }
-      if (r.status >= 400 && (isExhausted(r.status, r.body) || r.status === 429)) {
-        markCooling(account.id);
-        attempted.push({ account: label, ok: false, error: r.status === 429 ? '429 冷却' : '额度不足' });
-        continue;
-      }
-      logger.info('ZCODE-GW', `${label} 页内整链补全成功（${r.status}）`);
-      stats.lastAccount = label;
-      cooling.delete(account.id);
-      res.writeHead(r.status, { 'Content-Type': r.contentType || 'application/json', 'Cache-Control': 'no-cache' });
-      res.end(r.body);
-      return true;
-    }
-
     let upstream;
     const controller = new AbortController();
     req.on('close', () => controller.abort());

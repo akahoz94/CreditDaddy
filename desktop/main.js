@@ -51,9 +51,8 @@ async function boot() {
     const zauto = await load('src/zcodeAutoClaim.js');
     // ZCode 自动领取的验证码实现：隐藏窗口跑阿里云验证码 SDK（静默优先，风控时弹出让人工完成）
     zauto.setZcodeCaptchaProvider(zcodeCaptchaVerify);
-    // ZCode 免费额度网关的整链补全：隐藏窗口真 Chromium 求解 + 同源发起补全
-    const zgateway = await load('src/zcodeGateway.js');
-    zgateway.setZcodeCompletionProvider(zcodePlanCompletion);
+    // 网关补全走 R1 镜像 Node 请求面（zcodeGateway 内置）；页内整链委托已废弃
+    // （Chromium 自带的 sec-fetch-*/Origin 头反而成为风控指纹），zcodePlanCompletion 保留备用
     const store = await load('src/store.js');
     const constants = await load('src/constants.js');
     // 局域网网关：设置开启后绑定 0.0.0.0（面板访问密码开启时才建议，/gateway 数据面有自己的密钥）
