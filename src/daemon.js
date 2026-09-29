@@ -735,8 +735,10 @@ export async function startDaemon(port = DEFAULT_PORT, host = '127.0.0.1') {
         logger.warn('DAEMON', `拒绝请求 ${req.method} ${url.pathname}：${denied}（Host=${req.headers.host || ''} Origin=${req.headers.origin || ''}）`);
         return json(res, 403, { error: denied });
       }
-      // ZCode 免费额度网关（数据面，先于面板路由；仅本机回路，见 zcodeGateway.js）
-      if (url.pathname === '/gateway/v1/messages') {
+      // ZCode 免费额度网关（数据面，先于面板路由；仅本机回路，见 zcodeGateway.js）。
+      // /v1/messages 别名与 zcode-api 端点路径同形——10router 的 zcode-free 供应商
+      // 只需换 host:port 即可在 CreditDaddy 网关与 zcode-api 之间切换。
+      if (url.pathname === '/gateway/v1/messages' || url.pathname === '/v1/messages') {
         return await zcodeGateway.handleGateway(req, res);
       }
       if (url.pathname.startsWith('/api/')) {
