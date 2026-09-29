@@ -131,13 +131,15 @@ function readRawBody(req, limitBytes = 20 * 1024 * 1024) {
   });
 }
 
+// 业务码可能包在 HTTP 200 里（上游对部分错误回 200 + {code}），两类都要看
 const isCaptchaError = (status, text) =>
-  status === 405 || /3007|3012|captcha|unusual activity/i.test(text);
+  status === 405 || /"code"\s*:\s*(3007|3012)|3007|3012|captcha|unusual activity/i.test(text);
 
-const isAuthError = (status, text) => status === 401 || /令牌已过期|验证不正确/.test(text);
+const isAuthError = (status, text) =>
+  status === 401 || /"code"\s*:\s*401|令牌已过期|验证不正确/.test(text);
 
 const isExhausted = (status, text) =>
-  status === 402 || /1113|余额不足|无可用资源包|insufficient/i.test(text);
+  status === 402 || /"code"\s*:\s*(1005|1113)|1113|1005|余额不足|无可用资源包|exceed quota|insufficient/i.test(text);
 
 // 组装与 ZCode 客户端真实流量一致的 plan 请求（镜像 R1 捕获，2026-09-29）
 function buildPlanRequest(rawBody, { token, userId }) {
