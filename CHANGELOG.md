@@ -8,6 +8,14 @@
 
 ### ✨ 新功能
 
+- **ZCode 免费额度网关（Start Plan 体验包 → 本地补全端点）**：
+  - **数据面** `POST /gateway/v1/messages`（Anthropic `/v1/messages` 形态）：10Router 建一个 anthropic-compatible 自定义节点指向 `http://127.0.0.1:<端口>/gateway`，即可把 Start Plan 体验包（GLM-5.3-Flash）当普通供应商调度；SSE 流式原样透传。
+  - **验证码复用**：补全与「活动领取」共用同一个桌面版隐藏窗口求解器（真 Chromium 静默过阿里云验证码，8 秒未过弹人工）；token 缓存 30 秒摊薄求解开销，被服务端拒（3007/3012）即作废重解。
+  - **账号轮换与失败分类**：所有 provider=zcode 且快照里有 zcodejwttoken 的账号参与轮转；401（JWT 失效）拉黑、402/1113（额度不足）跳过半小时、429 冷却 5 分钟，全败返回 502 + 各账号结论汇总；凭据永不回传面板。
+  - **面板开关**：ZCode 页新增「额度网关：开/关」（设置持久化），开启后卡片显示本机端点地址；纯 CLI / NAS 环境无验证码提供者，开关给出明确说明。
+  - `fetchJsonRace` 支持调用方 AbortSignal 合并（流式转发可随客户端断开中止上游）。
+  - 单测 `zcode-gateway.test.js` 7 例（开关门 / 无提供者 / 无凭据账号 / SSE 透传与 token 缓存 / 3007 重解换号 / 401 拉黑与额度跳过 / 方法提示），全仓 109 例绿。
+
 - **接入美团「妙手」（CatPaw）产品线：额度 / 版本 / 用户信息 + 本机切号**：
   - **桌面客户端凭据解密**：自动定位 `%APPDATA%\catpaw-moon\catx-credential.json`，其 `ssoTokenEnc` 为 AES-256-GCM 密文（`iv‖tag‖ciphertext` base64），密钥由本机 `HKLM\...\Cryptography\MachineGuid` 派生（`sha256(machineId + ":catpaw-desk-token-v2")`），全程内存计算、不改动客户端存储格式即可读写。
   - **桌面网关直连**：额度 / 套餐版本 / 用户信息走 `https://catx.nocode.cn/api/gateway/*`（`auth/current-user` + `credit/balance`，token 置于 `X-Auth-Token` 头）——网页端 `credit.catpaw.meituan.com` 的三个接口只认浏览器 Cookie，daemon 不可用，网关路径为纯 token 鉴权，实测可用。

@@ -1266,6 +1266,9 @@ function renderStatus() {
       + ' <button class="btn" id="btn-zac" style="margin-left:6px" title="ZCode 活动资格每 2 分钟轮询，开启 1 小时后自动关闭">' + (ac ? '自动领取：开' : '自动领取：关') + '</button>'
       + ' <button class="btn" id="btn-znet" style="margin-left:4px" title="ZCode 上游接口的访问顺序：失败 / 被拦时自动回退另一条">出口：' + (pf ? '代理优先' : '直连优先') + '</button>'
       + ' <button class="btn" id="btn-zproxy" style="margin-left:4px" title="设置 ZCode 出口用的 http 代理（留空则清除；不设置时使用 HTTPS_PROXY 环境变量）">代理：' + esc(pu || (state.zHasEnvProxy ? '环境变量' : '未设置')) + '</button>'
+      + ' <button class="btn" id="btn-zgw" style="margin-left:4px" title="开启后本机 /gateway/v1/messages 提供 Start Plan（GLM-5.3-Flash 体验包）补全；10Router 建一个 anthropic-compatible 节点指向 http://127.0.0.1:' + location.port + '/gateway 即可调用。需要桌面版（隐藏窗口过验证码）">'
+      + (state.zGateway === true ? '额度网关：开' : '额度网关：关') + '</button>'
+      + (state.zGateway === true ? ' <span class="ver" style="margin-left:6px">POST http://127.0.0.1:' + location.port + '/gateway/v1/messages</span>' : '')
       + zcodeClientChip(s);
   } else if (hasIntl && !s.riskIdentity && umidOffer(s)) {
     n.style.display = '';
@@ -1359,6 +1362,15 @@ $('notice').addEventListener('click', async (e) => {
     } catch (err) { toast(err.message, false); }
     return;
   }
+  if (e.target.closest('#btn-zgw')) {
+    try {
+      const r = await api('/api/zcode-gateway', { method: 'PUT', json: { enabled: state.zGateway !== true } });
+      state.zGateway = r.enabled === true;
+      renderStatus();
+      toast('ZCode 额度网关：' + (r.enabled ? '已开启（10Router 建 anthropic-compatible 节点指向本机 /gateway/v1/messages）' : '已关闭'));
+    } catch (err) { toast(err.message, false); }
+    return;
+  }
   if (e.target.closest('#btn-znet')) {
     try {
       const r = await api('/api/zcode/net', { method: 'PUT', json: { proxyFirst: state.zProxyFirst !== true } });
@@ -1386,6 +1398,14 @@ async function loadZNet() {
     state.zProxyUrl = d.proxyUrlMasked || null;
     state.zAutoClaim = d.autoClaim === true;
     state.zHasEnvProxy = d.hasEnvProxy === true;
+    if (state.view === 'zcode') renderStatus();
+  } catch (e) {}
+}
+async function loadZGateway() {
+  try {
+    const d = await api('/api/zcode-gateway');
+    state.zGateway = d.enabled === true;
+    state.zGatewayHasCaptcha = d.hasCaptcha === true;
     if (state.view === 'zcode') renderStatus();
   } catch (e) {}
 }
@@ -2745,6 +2765,7 @@ applyView();
     loadStatus().then(loadAccounts).catch((e) => toast(e.message, false));
     loadSettings().then(renderCompMenu);
     loadZNet();
+    loadZGateway();
     loadTrConfig().then(() => loadTrQuotas());
     setInterval(() => loadTrQuotas(), 5 * 60 * 1000);
     // 账号余额（ZCode 剩余 token 等）自动刷新：可见时每 2 分钟一轮；从托盘/后台切回时若超过 1 分钟没刷过立即补一轮

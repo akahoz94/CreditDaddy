@@ -63,6 +63,7 @@ import { runCheckinTick, getSchedulerInfo, dayKey, enableZcodeAutoClaimForOneHou
 import { detectQoderApps, readQoderAppAccounts, riskIdentityAvailable, riskIdentitySource } from './qoderApp.js';
 import { umidInfo, installUmid } from './qoderUmid.js';
 import * as tenrouter from './tenrouter.js';
+import * as zcodeGateway from './zcodeGateway.js';
 import { startDeviceFlow, pollDeviceFlow, LOGIN_KINDS } from './authDevice.js';
 import { detectInstalls, scanLocalTokens, putCandidate, peekCandidate } from './localDetect.js';
 import { PROVIDER_LABEL, APP_VERSION, PROVIDERS, PROJECT_URL } from './constants.js';
@@ -341,6 +342,15 @@ async function handleApi(req, res, url) {
   }
   // ZCode 出口偏好：默认「直连优先、代理兜底」，可切「代理优先、直连兜底」；代理地址可面板配置（存 zcode-net.json，0600）
   // 自动领取开启时附带 1 小时时限（autoClaimUntil），到期调度器自动关闭并停止轮询
+  if (p === '/api/zcode-gateway' && method === 'GET') {
+    return json(res, 200, await zcodeGateway.gatewayStatus());
+  }
+  if (p === '/api/zcode-gateway' && method === 'PUT') {
+    const body = await readBody(req).catch(() => ({}));
+    await zcodeGateway.setGatewayEnabled(body?.enabled === true);
+    logger.info('DAEMON', `ZCode 免费额度网关：${body?.enabled === true ? '开' : '关'}`);
+    return json(res, 200, await zcodeGateway.gatewayStatus());
+  }
   if (p === '/api/zcode/net' && method === 'GET') {
     const u = proxyUrl();
     const masked = u ? (() => { try { const x = new URL(u); x.password = x.password ? '*'.repeat(4) : ''; return x.toString(); } catch { return '***'; } })() : null;
@@ -721,6 +731,10 @@ export async function startDaemon(port = DEFAULT_PORT, host = '127.0.0.1') {
       if (denied) {
         logger.warn('DAEMON', `拒绝请求 ${req.method} ${url.pathname}：${denied}（Host=${req.headers.host || ''} Origin=${req.headers.origin || ''}）`);
         return json(res, 403, { error: denied });
+      }
+      // ZCode 免费额度网关（数据面，先于面板路由；仅本机回路，见 zcodeGateway.js）
+      if (url.pathname === '/gateway/v1/messages') {
+        return await zcodeGateway.handleGateway(req, res);
       }
       if (url.pathname.startsWith('/api/')) {
         return await handleApi(req, res, url);

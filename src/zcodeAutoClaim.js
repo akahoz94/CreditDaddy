@@ -18,6 +18,7 @@ import { fetchClaimPlans, claimPlan, fetchCaptchaConfig } from './zcodeClient.js
 let captchaProvider = null;
 export function setZcodeCaptchaProvider(fn) { captchaProvider = typeof fn === 'function' ? fn : null; }
 export function hasZcodeCaptchaProvider() { return Boolean(captchaProvider); }
+export function getZcodeCaptchaProvider() { return captchaProvider; }
 
 const grantsText = (plan) => (plan.grants && plan.grants.length ? plan.grants.join('；') : '');
 

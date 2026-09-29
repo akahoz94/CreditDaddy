@@ -217,8 +217,10 @@ async function fetchViaProxy(url, { method = 'GET', headers = {}, body = null, t
 let viaProxyImpl = null;
 export function _setViaProxyForTests(fn) { viaProxyImpl = fn || null; }
 
-export async function fetchJsonRace(url, { method = 'GET', headers = {}, body = null, timeoutMs = 15000 } = {}) {
-  const base = { method, headers: { ...headers }, ...(body != null ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}), signal: AbortSignal.timeout(timeoutMs) };
+export async function fetchJsonRace(url, { method = 'GET', headers = {}, body = null, timeoutMs = 15000, signal = null } = {}) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const abortSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
+  const base = { method, headers: { ...headers }, ...(body != null ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}), signal: abortSignal };
   const useProxy = Boolean(effectiveProxy()) && !proxyBypass(url);
   const direct = () => fetch(url, base);
   const viaProxy = viaProxyImpl
@@ -246,7 +248,7 @@ const CLAIM_FAIL = {
 
 const platform = () => `${process.platform}-${process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : process.arch}`;
 
-async function zaiHeaders(token, deviceMid) {
+export async function zaiHeaders(token, deviceMid) {
   const ver = await zcodeAppVersion();
   return {
     'User-Agent': `ZCode/${ver}`,
@@ -315,8 +317,8 @@ function billingTokens(account) {
   return out;
 }
 
-/** 领取用的 token：zcodejwttoken 优先，其次 start-plan key（与 claim.rs claim_token 一致） */
-function claimToken(account) {
+/** 领取/网关补全用的 token：zcodejwttoken 优先，其次 start-plan key（与 claim.rs claim_token 一致） */
+export function claimToken(account) {
   const t = billingTokens(account);
   if (!t.length) throw new Error('账号快照里没有可用的 zcodejwttoken，请在 ZCode 重新登录（或重新本机导入）后再领取');
   return t[0];
