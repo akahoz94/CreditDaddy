@@ -3,7 +3,12 @@
  *
  * 凭据存储：
  *   ~/.mirasim/setting.json        auth: { token, refreshToken, userId, name, exp }（mrs1: 加密）
- *   ~/.mirasim/secret.key          DPAPI 加密的 master key（Windows 上是 hex 字符串）
+ *   ~/.mirasim/secret.key          DPAPI 加密的 master key（Windows 上是 hex 字符串；旧版）
+ *   %APPDATA%\@mirasim\desktop\secret-key.enc
+ *                                  新版桌面端：Electron safeStorage 密文（v10 + AES-256-GCM，
+ *                                  密钥 = 同目录 Local State 的 os_crypt.encrypted_key 经 DPAPI 解开），
+ *                                  明文即 64 字符 hex master key
+ *   MIRASIM_SECRET_KEY / MIRASIM_APP_SECRET_KEY  环境变量（64 字符 hex，客户端也会注入给子进程）
  *
  * 加密格式：
  *   mrs1:<base64(12B IV + 16B tag + ciphertext)>，AES-256-GCM，
@@ -28,12 +33,22 @@ export function mirasimHome() {
   return process.env.MIRASIM_HOME || path.join(os.homedir(), '.mirasim');
 }
 
+/** 新版桌面端（Electron）userData 目录 */
+export function mirasimDesktopDataDir() {
+  if (process.env.MIRASIM_DESKTOP_DATA_DIR) return process.env.MIRASIM_DESKTOP_DATA_DIR;
+  const roaming = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  return path.join(roaming, '@mirasim', 'desktop');
+}
+
 export function mirasimPaths() {
   const h = mirasimHome();
+  const desktop = mirasimDesktopDataDir();
   return {
     home: h,
     setting: path.join(h, 'setting.json'),
     secretKey: path.join(h, 'secret.key'),
+    secretKeyEnc: path.join(desktop, 'secret-key.enc'),
+    localState: path.join(desktop, 'Local State'),
     insights: path.join(h, 'insights'),
   };
 }
@@ -52,6 +67,7 @@ function atomicWriteJson(file, obj) {
 // ── DPAPI 解密 master key ──
 
 let masterKeyCache = null;
+let masterKeyFromSecretFile = false; // 只有取自 ~/.mirasim/secret.key 的密钥才回写该文件
 
 function persistMasterKey(paths, key) {
   try {
@@ -77,8 +93,7 @@ function readEnvironmentMasterKey() {
   if (!value) return null;
   const hex = value.trim();
   if (!/^[0-9a-f]{64}$/i.test(hex)) return null;
-  masterKeyCache = Buffer.from(hex, 'hex');
-  return masterKeyCache;
+  return Buffer.from(hex, 'hex');
 }
 
 function dpapiUnprotect(buf) {
@@ -97,17 +112,45 @@ function dpapiUnprotect(buf) {
   });
 }
 
-/** 取得解开后的 32 字节 master key Buffer（未配置或解密失败返回 null） */
+/** 新版桌面端 secret-key.enc（Electron safeStorage，仅 Windows）→ master key；读不到返回 null */
+async function readSafeStorageMasterKey(p) {
+  if (process.platform !== 'win32' || !fs.existsSync(p.secretKeyEnc)) return null;
+  try {
+    const enc = fs.readFileSync(p.secretKeyEnc);
+    const ek = Buffer.from(readJson(p.localState)?.os_crypt?.encrypted_key || '', 'base64');
+    if (enc.length < 3 + 12 + 16 || enc.subarray(0, 3).toString('latin1') !== 'v10') return null;
+    if (ek.subarray(0, 5).toString('latin1') !== 'DPAPI') return null;
+    const aesKey = await dpapiUnprotect(ek.subarray(5));
+    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, enc.subarray(3, 15));
+    decipher.setAuthTag(enc.subarray(enc.length - 16));
+    const hex = Buffer.concat([decipher.update(enc.subarray(15, enc.length - 16)), decipher.final()]).toString('utf8').trim();
+    return /^[0-9a-f]{64}$/i.test(hex) ? Buffer.from(hex, 'hex') : null;
+  } catch { return null; }
+}
+
+/**
+ * 取得解开后的 32 字节 master key Buffer（未配置或解密失败返回 null）。
+ * 依次尝试：~/.mirasim/secret.key（旧版）→ 桌面端 secret-key.enc（新版）→ 环境变量。
+ */
 export async function getMasterKey() {
   const p = mirasimPaths();
-  // 客户端可能在进程内沿用已缓存的密钥：磁盘文件被删除时，仍可用缓存解密，
-  // 并将密钥原样写回，修复「setting.json 是 mrs1:、secret.key 缺失」的状态。
+  // 旧版 secret.key 读过后被删：用缓存解密，并原样写回修复
   if (masterKeyCache) {
-    if (!fs.existsSync(p.secretKey)) persistMasterKey(p, masterKeyCache);
+    if (masterKeyFromSecretFile && !fs.existsSync(p.secretKey)) persistMasterKey(p, masterKeyCache);
     return masterKeyCache;
   }
-  if (!fs.existsSync(p.secretKey)) return readEnvironmentMasterKey();
+  const fromFile = await readSecretKeyFile(p);
+  if (fromFile) { masterKeyFromSecretFile = true; return (masterKeyCache = fromFile); }
+  const fromDesktop = await readSafeStorageMasterKey(p);
+  if (fromDesktop) return (masterKeyCache = fromDesktop);
+  const fromEnv = readEnvironmentMasterKey();
+  if (fromEnv) return (masterKeyCache = fromEnv);
+  return null;
+}
 
+/** 旧版 ~/.mirasim/secret.key → master key；没有或解不开返回 null */
+async function readSecretKeyFile(p) {
+  if (!fs.existsSync(p.secretKey)) return null;
   try {
     const raw = fs.readFileSync(p.secretKey, 'utf8').trim();
     if (process.platform === 'win32') {
@@ -115,20 +158,12 @@ export async function getMasterKey() {
       const unprotected = await dpapiUnprotect(bin);
       // Windows 存放的是 utf16le 编码的 64 字符 hex 密钥
       const hex = unprotected.toString('utf16le').trim();
-      if (/^[0-9a-f]{64}$/i.test(hex)) {
-        masterKeyCache = Buffer.from(hex, 'hex');
-        return masterKeyCache;
-      }
-      if (/^[0-9a-f]{64}$/i.test(unprotected.toString('utf8').trim())) {
-        masterKeyCache = Buffer.from(unprotected.toString('utf8').trim(), 'hex');
-        return masterKeyCache;
-      }
+      if (/^[0-9a-f]{64}$/i.test(hex)) return Buffer.from(hex, 'hex');
+      const utf8 = unprotected.toString('utf8').trim();
+      if (/^[0-9a-f]{64}$/i.test(utf8)) return Buffer.from(utf8, 'hex');
     } else {
       // macOS / Linux 下如果有直接存 hex 或钥匙串导出
-      if (/^[0-9a-f]{64}$/i.test(raw)) {
-        masterKeyCache = Buffer.from(raw, 'hex');
-        return masterKeyCache;
-      }
+      if (/^[0-9a-f]{64}$/i.test(raw)) return Buffer.from(raw, 'hex');
     }
   } catch {}
   return null;
@@ -235,10 +270,9 @@ export async function liveToAccount() {
   let refreshToken = s.auth.refreshToken;
   if (isEncrypted(token)) {
     if (!key) {
-      // 明确区分「密钥缺失」和「解密失败」两种状态，方便用户理解并设置环境变量
-      const envName = process.platform === 'win32' ? 'MIRASIM_SECRET_KEY' : 'MIRASIM_APP_SECRET_KEY';
-      const hint = `未找到 ${p.secretKey}，请先完整重启 Mirasim 客户端生成；或临时设置环境变量 ${envName} 绕过`;
-      const err = new Error(hint);
+      // 明确区分「已登录但缺密钥」「解密失败」「未登录（返回 null）」
+      const where = process.platform === 'win32' ? `${p.secretKey} / ${p.secretKeyEnc}` : p.secretKey;
+      const err = new Error(`已登录但读不到 mirasim 密钥（已检查 ${where} 与环境变量 MIRASIM_SECRET_KEY / MIRASIM_APP_SECRET_KEY）。请完全退出全部 Mirasim 进程后重启并登录，再重新扫描`);
       err.code = 'MISSING_SECRET_KEY';
       throw err;
     }

@@ -141,11 +141,13 @@ async function main() {
       const { addAccount } = await import('../src/accounts.js');
       const qa = await readQoderAppAccounts();
       const wb = readWorkbuddySessions();
-      const zAccount = zcodeLive();
+      const skipped = [];
+      let zAccount = null;
+      try { zAccount = zcodeLive(); } catch (e) { skipped.push({ file: '~/.zcode/v2/credentials.json', error: e.message }); }
       let miraAccount = null;
-      try { miraAccount = await mirasimLive(); } catch {}
+      try { miraAccount = await mirasimLive(); } catch (e) { skipped.push({ file: '~/.mirasim/setting.json', error: e.message }); }
       let cpAccount = null;
-      try { cpAccount = await catpawLive(); } catch {}
+      try { cpAccount = await catpawLive(); } catch (e) { skipped.push({ file: 'catpaw-moon/catx-credential.json', error: e.message }); }
       const records = [
         ...qa.accounts.map((c) => ({
           label: c.source,
@@ -158,7 +160,7 @@ async function main() {
         ...(miraAccount ? [{ label: 'mirasim 当前登录', rec: miraAccount }] : []),
         ...(cpAccount ? [{ label: '妙手当前登录', rec: cpAccount }] : []),
       ];
-      for (const e of [...qa.errors, ...wb.errors]) console.log('⚠', e.file, e.error);
+      for (const e of [...qa.errors, ...wb.errors, ...skipped]) console.log('⚠', e.file, e.error);
       if (!records.length) { console.log('（本机 Qoder / WorkBuddy / ZCode / mirasim / 妙手 客户端未登录或未安装）'); break; }
       for (const { label, rec } of records) {
         const r = await addAccount(rec, { trusted: true });

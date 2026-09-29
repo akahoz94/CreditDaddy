@@ -535,13 +535,8 @@ async function handleApi(req, res, url) {
       const m = await mirasimLiveAccount();
       if (m) addRecord(m, { source: 'mirasim 当前登录', current: true });
     } catch (e) {
-      // 区分密钥缺失和解密失败，给出更有用的提示
-      const hint = e.code === 'MISSING_SECRET_KEY'
-        ? 'secret.key 缺失（可能是进程内缓存密钥但磁盘被删），请完全退出 Mirasim 后重启，或临时设置环境变量 MIRASIM_SECRET_KEY'
-        : e.code === 'DECRYPT_FAILED'
-          ? '密钥存在但解密失败（版本不兼容 / 密钥损坏）'
-          : e.message;
-      errors.push({ file: '~/.mirasim/setting.json', error: hint });
+      // MISSING_SECRET_KEY / DECRYPT_FAILED 的文案已在 mirasimLocal 里写清检查过的位置
+      errors.push({ file: '~/.mirasim/setting.json', error: e.message });
     }
     // 5) 妙手客户端：解密 %APPDATA%\catpaw-moon\catx-credential.json 的当前登录
     try {

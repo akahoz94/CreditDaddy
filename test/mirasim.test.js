@@ -7,6 +7,10 @@ import crypto from 'node:crypto';
 
 const MHOME = fs.mkdtempSync(path.join(os.tmpdir(), 'mirasim-test-'));
 process.env.MIRASIM_HOME = MHOME;
+process.env.MIRASIM_DESKTOP_DATA_DIR = MHOME;
+// 在 Mirasim 里跑测试时客户端会注入真实 master key，隔离掉
+delete process.env.MIRASIM_SECRET_KEY;
+delete process.env.MIRASIM_APP_SECRET_KEY;
 
 const ml = await import('../src/mirasimLocal.js');
 const mc = await import('../src/mirasimClient.js');
@@ -144,5 +148,39 @@ test('fetchMirasimQuota：401 后自动刷新并重试，经 ctx.onRefresh 回�
   } finally {
     globalThis.fetch = realFetch;
     zcNet._setViaProxyForTests(null);
+  }
+});
+
+test('新版桌面端 secret-key.enc（safeStorage v10）：无 secret.key 也能解出 master key', { skip: process.platform !== 'win32' }, async () => {
+  const { execFileSync } = await import('node:child_process');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mirasim-v10-'));
+  const prev = { h: process.env.MIRASIM_HOME, d: process.env.MIRASIM_DESKTOP_DATA_DIR };
+  process.env.MIRASIM_HOME = home;
+  process.env.MIRASIM_DESKTOP_DATA_DIR = home;
+  try {
+    // 构造 Chromium os_crypt：Local State 里存 "DPAPI" + DPAPI(aesKey)
+    const aesKey = crypto.randomBytes(32);
+    const script = 'Add-Type -AssemblyName System.Security;$b=[Convert]::FromBase64String([Console]::In.ReadToEnd());'
+      + "[Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect($b,$null,'CurrentUser'))";
+    const protectedKey = Buffer.from(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { input: aesKey.toString('base64'), encoding: 'utf8', windowsHide: true }).trim(), 'base64');
+    fs.writeFileSync(path.join(home, 'Local State'), JSON.stringify({ os_crypt: { encrypted_key: Buffer.concat([Buffer.from('DPAPI'), protectedKey]).toString('base64') } }));
+    // secret-key.enc = "v10" + nonce + AES-GCM(64 字符 hex master key) + tag
+    const master = crypto.randomBytes(32);
+    const nonce = crypto.randomBytes(12);
+    const c = crypto.createCipheriv('aes-256-gcm', aesKey, nonce);
+    const ct = Buffer.concat([c.update(master.toString('hex'), 'utf8'), c.final()]);
+    fs.writeFileSync(path.join(home, 'secret-key.enc'), Buffer.concat([Buffer.from('v10'), nonce, ct, c.getAuthTag()]));
+    fs.writeFileSync(path.join(home, 'setting.json'), JSON.stringify({ auth: { userId: 'usr_v10', token: ml.encryptWithKey('a.b.c', master), refreshToken: ml.encryptWithKey('rt', master) } }));
+
+    const ml2 = await import('../src/mirasimLocal.js?v10');
+    const acc = await ml2.liveToAccount();
+    assert.equal(acc.token, 'a.b.c');
+    assert.equal(acc.refreshToken, 'rt');
+    assert.ok(!fs.existsSync(path.join(home, 'secret.key')), '不应往 mirasim 目录写旧版 secret.key');
+  } finally {
+    process.env.MIRASIM_HOME = prev.h;
+    process.env.MIRASIM_DESKTOP_DATA_DIR = prev.d;
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
