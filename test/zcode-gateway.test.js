@@ -141,15 +141,16 @@ test('无可用账号（快照里没有 zcodejwttoken）返回 503', async () =>
 test('验证码 + 补全成功：SSE 透传，token 30s 内复用（一次求解）', async () => {
   await resetState();
   await seedAccount('a1', '账号一');
-  upstreamQueue.push(capCfg(), { status: 200, sse: true, body: sseBody() });
+  upstreamQueue.push({ status: 200, sse: true, body: sseBody() });
   const res = captureRes();
   await gw.handleGateway(fakeReq('POST', '{"model":"glm-5.3-flash","stream":true}'), res);
   assert.equal(res.status, 200, res.body);
   assert.equal(res.body, sseBody());
   assert.equal(completions().length, 1);
-  assert.ok(completions()[0].headers['X-Aliyun-Captcha-Verify-Param']);
+  // 首发不带验证码头——客户端真实流量多数直过
+  assert.equal(completions()[0].headers['X-Aliyun-Captcha-Verify-Param'], undefined);
   assert.match(completions()[0].headers.Authorization, /^Bearer jwt-a1-/);
-  assert.equal(captchaSolves, 1);
+  assert.equal(captchaSolves, 0);
 });
 
 test('3007 验证码被拒 → 每次尝试都强制重解新 token，全败 502 汇总', async () => {
@@ -171,8 +172,11 @@ test('3007 验证码被拒 → 每次尝试都强制重解新 token，全败 502
   const parsed = JSON.parse(res.body);
   assert.ok(parsed.attempts.length >= 2);
   assert.ok(parsed.attempts.some((a) => /验证码被拒/.test(a.error)));
-  const params = completions().map((c) => JSON.parse(c.headers['X-Aliyun-Captcha-Verify-Param']).certifyId);
-  assert.equal(new Set(params).size, params.length, '每次尝试都应有新验证码 token');
+  // 首发无验证码头；重试的每次都带新解的 token
+  const withCaptcha = completions().filter((c) => c.headers['X-Aliyun-Captcha-Verify-Param']);
+  const params = withCaptcha.map((c) => JSON.parse(c.headers['X-Aliyun-Captcha-Verify-Param']).certifyId);
+  assert.ok(withCaptcha.length >= 2, '被拒后应有带验证码的重试');
+  assert.equal(new Set(params).size, params.length, '每次重试都应有新验证码 token');
 });
 
 test('401 → 账号拉黑；额度不足/429 → 跳过换号；最终成功', async () => {
@@ -181,7 +185,6 @@ test('401 → 账号拉黑；额度不足/429 → 跳过换号；最终成功', 
   await seedAccount('poor', '没额度号');
   await seedAccount('good', '好号');
   upstreamQueue.push(
-    capCfg(),
     { status: 401, body: '{"code":401,"msg":"令牌已过期"}' },
     { status: 429, body: '{"error":{"code":"429"}}' },
     { status: 200, sse: true, body: sseBody() },

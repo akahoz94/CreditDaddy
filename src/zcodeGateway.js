@@ -17,6 +17,16 @@
  */
 
 import { claimToken, zaiHeaders, fetchCaptchaConfig, fetchJsonRace } from './zcodeClient.js';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// ZCode 客户端 plan 请求形状（从本机客户端真实流量捕获的载荷模板：系统提示词数组 +
+// currentDate 提醒块 + metadata 会话形状）。网关请求镜像此形状——这就是 405 风控的通过票。
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let PLAN_SHAPE = null;
+try { PLAN_SHAPE = JSON.parse(readFileSync(path.join(__dirname, 'zcodePlanShape.json'), 'utf8')); } catch {}
+
 import { getZcodeCaptchaProvider } from './zcodeAutoClaim.js';
 import { gatewayKey as tenrouterGatewayKey } from './tenrouter.js';
 
@@ -27,6 +37,7 @@ export function setZcodeCompletionProvider(fn) { completionProvider = typeof fn 
 export function getZcodeCompletionProvider() { return completionProvider; }
 import { loadAccounts, loadSettings, saveSettings } from './store.js';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { logger } from './logger.js';
 
 const PLAN_MESSAGES_URL = 'https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages';
@@ -117,6 +128,58 @@ const isAuthError = (status, text) => status === 401 || /令牌已过期|验证�
 const isExhausted = (status, text) =>
   status === 402 || /1113|余额不足|无可用资源包|insufficient/i.test(text);
 
+// 组装与 ZCode 客户端真实流量一致的 plan 请求（镜像 R1 捕获，2026-09-29）
+function buildPlanRequest(rawBody, { token, userId }) {
+  const ver = '3.14.3';
+  let bodyObj;
+  try { bodyObj = JSON.parse(rawBody); } catch { bodyObj = null; }
+  if (!bodyObj || typeof bodyObj !== 'object') bodyObj = { model: 'glm-5.3-flash', messages: [] };
+  // 客户端形状：system = ZCode 系统提示词数组；首条 user 消息前插 currentDate 提醒块；
+  // metadata.user_id = 会话形状字符串
+  if (PLAN_SHAPE) {
+    bodyObj.system = PLAN_SHAPE.system;
+    const msgs = Array.isArray(bodyObj.messages) ? bodyObj.messages : [];
+    const reminderText = PLAN_SHAPE.reminderText
+      ? PLAN_SHAPE.reminderText.replace(/Today's date is [^.]+\./, `Today's date is ${new Date().toISOString().slice(0, 10)}.`)
+      : null;
+    if (reminderText) {
+      const first = msgs[0];
+      const firstIsUser = first?.role === 'user';
+      const already = firstIsUser && typeof first.content === 'string' && first.content.includes('<system-reminder>');
+      if (!already) {
+        const block = { type: 'text', text: reminderText };
+        if (firstIsUser && Array.isArray(first.content)) first.content = [block, ...first.content];
+        else if (firstIsUser) first.content = [block, { type: 'text', text: String(first.content ?? '') }];
+        else msgs.unshift({ role: 'user', content: [block, { type: 'text', text: '.' }] });
+      }
+      bodyObj.messages = msgs;
+    }
+    bodyObj.metadata = { user_id: JSON.stringify({ account_uuid: '', session_id: 'ses_' + crypto.randomUUID().slice(0, 16) }) };
+  }
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: '*/*',
+    'accept-encoding': 'gzip',
+    'User-Agent': `ZCode/${ver} ai-sdk/anthropic/3.0.81`,
+    'X-ZCode-App-Version': ver,
+    'X-ZCode-Agent': 'glm',
+    'X-Title': 'Z Code@cli',
+    'HTTP-Referer': 'https://zcode.z.ai',
+    'X-Client-Language': 'zh-CN',
+    'X-Client-Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
+    'X-Platform': 'win32-x64',
+    'X-Os-Category': 'windows',
+    'X-Os-Version': os.release?.() || '10.0.19045',
+    'X-Release-Channel': 'production',
+    'x-zcode-session-type': 'main',
+    'x-zcode-trace-id': crypto.randomUUID(),
+    'x-request-id': crypto.randomUUID(),
+    'anthropic-version': '2023-06-01',
+    Authorization: `Bearer ${token}`,
+  };
+  return { headers, body: JSON.stringify(bodyObj) };
+}
+
 const LOOPBACK_RE = /^(::1|::ffff:127\.0\.0\.1|127\.0\.0\.1)$/;
 function isLoopbackRemote(remote) {
   return !remote || LOOPBACK_RE.test(String(remote));
@@ -148,12 +211,8 @@ export async function handleGateway(req, res) {
     res.writeHead(503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'ZCode 免费额度网关未开启（面板 → ZCode → 网关开关）' }));
   }
-  const completionProvider = getZcodeCompletionProvider();
-  const provider = completionProvider || getZcodeCaptchaProvider();
-  if (!provider) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: '本环境没有验证码提供者：网关补全需要桌面版 CreditDaddy（隐藏窗口静默过验证码）' }));
-  }
+  // 首发不带验证码（客户端真实流量多数直过），所以纯 daemon / NAS 也能用；
+  // 只有当上游索要验证码且本环境没有求解提供者时才失败（见 attempts 汇总）。
 
   // 鉴权：本机回环免密；局域网/远程访问必须携带与设置一致的密钥
   // （推荐直接复用 10r 的 LLM key：在 10r 面板复制，填进网关密钥与节点连接各一次）
@@ -195,19 +254,12 @@ export async function handleGateway(req, res) {
   stats.calls += 1;
 
   const attempted = [];
+  // 首发不带验证码（客户端真实流量多数直过）；上游 3007/403 时求解并在此后的
+  // 尝试上挂新 token（zcode-api 同策略）。provider 为 null（NAS/CLI）时首过路径依然可用。
+  let captcha = null;
   for (let i = 0; i < Math.min(MAX_ATTEMPTS, queue.length * 2); i++) {
     const account = queue[i % queue.length];
     const label = account.name || account.uid || account.id;
-    let captcha;
-    try {
-      // 验证码被拒的分支会 invalidateCaptcha()——缓存为空时这里自然重解新 token
-      captcha = await ensureCaptcha(false);
-    } catch (e) {
-      logger.warn('ZCODE-GW', `验证码获取失败：${e.message}`);
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: `验证码获取失败：${e.message}` }));
-    }
-
     let token;
     try { token = claimToken(account); } catch (e) {
       attempted.push({ account: label, ok: false, error: e.message });
@@ -271,24 +323,17 @@ export async function handleGateway(req, res) {
     const controller = new AbortController();
     req.on('close', () => controller.abort());
     try {
-      // 请求面完全镜像 ZCode 客户端的 anthropic 形态：identity 头之外，
-      // plan 端点还要求 SDK UA 后缀 / anthropic-version / 会话追踪头，缺了会被风控 405/3012
-      const identity = await zaiHeaders(token, account.meta?.deviceMid);
-      const headers = {
-        ...identity,
-        'Content-Type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'accept-encoding': 'gzip',
-        'User-Agent': `${identity['User-Agent']} ai-sdk/anthropic/3.0.81`,
-        'x-zcode-session-type': 'main',
-        'x-zcode-trace-id': crypto.randomUUID(),
-        'X-Aliyun-Captcha-Verify-Param': captcha.param,
-        'X-Aliyun-Captcha-Verify-Region': captcha.region,
-      };
+      // 请求面完全镜像 ZCode 客户端真实流量（R1 捕获）：全套 identity 头 + 客户端
+      // 系统提示词/提醒块/metadata 形状。验证码不预挂——服务端未风控时直过；
+      // 返回 3007/403 再求解挂上重试（zcode-api 同策略）。
+      const built = buildPlanRequest(rawBody, { token, userId: account.uid });
+      const headers = captcha
+        ? { ...built.headers, 'X-Aliyun-Captcha-Verify-Param': captcha.param, 'X-Aliyun-Captcha-Verify-Region': captcha.region }
+        : built.headers;
       upstream = await fetchJsonRace(PLAN_MESSAGES_URL, {
         method: 'POST',
         headers,
-        body: rawBody,
+        body: built.body,
         timeoutMs: UPSTREAM_TIMEOUT_MS,
         signal: controller.signal,
       });
@@ -302,7 +347,13 @@ export async function handleGateway(req, res) {
       logger.info('ZCODE-GW', `${label} 补全成功（${upstream.status}）`);
       stats.lastAccount = label;
       cooling.delete(account.id);
-      const out = { 'Content-Type': upstream.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-cache' };
+      // 透传 content-type + content-encoding（上游 gzip 原样转发，客户端自行解码）
+      const out = {
+        'Content-Type': upstream.headers.get('content-type') || 'application/json',
+        'Cache-Control': 'no-cache',
+      };
+      const enc = upstream.headers.get('content-encoding');
+      if (enc) out['Content-Encoding'] = enc;
       res.writeHead(upstream.status, out);
       try {
         const reader = upstream.body.getReader();
@@ -321,11 +372,15 @@ export async function handleGateway(req, res) {
     }
 
     const text = await upstream.text().catch(() => '');
-    // 验证码类失败：作废 token，换号/重解再来
+    // 验证码类失败：作废 token 并强制重解（有提供者时下一次尝试带上新 token）
     if (isCaptchaError(upstream.status, text)) {
       invalidateCaptcha();
       attempted.push({ account: label, ok: false, error: `验证码被拒（${upstream.status}）`, captcha: true });
       logger.warn('ZCODE-GW', `${label} 验证码被拒（${upstream.status}），重解重试`);
+      try { captcha = await ensureCaptcha(true); } catch (e) {
+        logger.warn('ZCODE-GW', `重解失败：${e.message}`);
+        captcha = null;
+      }
       continue;
     }
     if (isAuthError(upstream.status, text)) {
