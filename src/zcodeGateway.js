@@ -63,6 +63,17 @@ const cooling = new Map();  // accountId → 冷却截止(ms)
 const dead = new Set();     // JWT 失效的账号
 
 function markCooling(id, ms = ACCOUNT_COOLING_MS) { cooling.set(id, Date.now() + ms); }
+
+/** 测试专用：清空进程内轮换/冷却/拉黑/验证码缓存/统计状态 */
+export function __resetForTests() {
+  rrIndex = 0;
+  cooling.clear();
+  dead.clear();
+  captchaCache = null;
+  stats.lastCallAt = null;
+  stats.calls = 0;
+  stats.lastAccount = null;
+}
 function markDead(id) { dead.add(id); cooling.set(id, Number.MAX_SAFE_INTEGER); }
 
 /** 可参与轮换的账号（有可解析 plan JWT、未冷却/未拉黑），按轮转序排列 */

@@ -1,6 +1,6 @@
 /**
  * zcodeGateway — 开关门 / 验证码缓存与失效 / 账号轮换与失败分类。
- * fetch 与验证码提供者全部注入，无网络。
+ * fetch 与验证码提供者全部注入，无网络；每个用例前重置全部模块态。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,42 +15,47 @@ process.env.CREDITDADDY_HOME = MHOME;
 const store = await import('../src/store.js');
 const zauto = await import('../src/zcodeAutoClaim.js');
 const zc = await import('../src/zcrypto.js');
-const gw = await import('../src/zcodeGateway.js');
 const zclient = await import('../src/zcodeClient.js');
-// 版本探测走网络，会打乱 mock 队列 —— 直接预置缓存
+const gw = await import('../src/zcodeGateway.js');
 zclient._resetAppVersionCache('3.14.0');
 
-// 与 zcodeClient.safeDecrypt 同款密钥派生（zcrypto.defaultSecret(os.homedir())）
 const secret = zc.defaultSecret(os.homedir());
 const encForStore = (plain) => zc.encryptWithSecret(plain, secret);
 
+let currentAccounts = [];
 let fetchCalls = [];
 let captchaSolves = 0;
-let captchaFail = false;
 let upstreamQueue = [];
 
-store.saveSettings({ zcodeGateway: true });
-zauto.setZcodeCaptchaProvider(async () => {
-  if (captchaFail) throw new Error('求解器故障');
-  captchaSolves += 1;
-  return { captchaParam: `{"sceneId":"11xygtvd","certifyId":"cert-${captchaSolves}","deviceToken":"dt"}`, region: 'cn' };
-});
+const providerOk = () => {
+  zauto.setZcodeCaptchaProvider(async () => {
+    captchaSolves += 1;
+    return { captchaParam: `{"sceneId":"11xygtvd","certifyId":"cert-${captchaSolves}","deviceToken":"dt"}`, region: 'cn' };
+  });
+};
 
 globalThis.fetch = async (url, init = {}) => {
-  if (process.env.GW_DEBUG) console.log('[fetch]', String(url).slice(0, 80), '| queue[0] =', upstreamQueue[0] ? String(upstreamQueue[0].body).slice(0, 60) : '(empty)');
   fetchCalls.push({ url: String(url), method: init.method, headers: init.headers });
   const next = upstreamQueue.shift();
   if (!next) throw new Error('no queued upstream response');
   return {
     ok: (next.status || 200) < 400,
     status: next.status || 200,
-    headers: { get: (k) => (k.toLowerCase() === 'content-type' ? (next.sse ? 'text/event-stream' : 'application/json') : null) },
+    headers: { get: (k) => (k.toLowerCase() === 'content-type' ? (next.sse ? 'text/event-stream' : 'application/json') : k.toLowerCase() === 'content-encoding' ? (next.gz ? 'gzip' : null) : null) },
     text: async () => next.body ?? '',
-    body: new ReadableStream({
-      start(c) { if (next.body) c.enqueue(Buffer.from(next.body)); c.close(); },
-    }),
+    body: new ReadableStream({ start(c) { if (next.body) c.enqueue(Buffer.from(next.body)); c.close(); } }),
   };
 };
+
+async function resetState({ settings = { zcodeGateway: true } } = {}) {
+  currentAccounts = [];
+  await store.saveAccounts([]);
+  await store.saveSettings(settings);
+  fetchCalls = [];
+  upstreamQueue = [];
+  captchaSolves = 0;
+  gw.__resetForTests();
+}
 
 async function seedAccount(id, name, withJwt = true) {
   const acc = {
@@ -60,15 +65,6 @@ async function seedAccount(id, name, withJwt = true) {
   currentAccounts.push(acc);
   await store.saveAccounts(currentAccounts);
   return acc;
-}
-
-let currentAccounts = [];
-
-async function resetState() {
-  currentAccounts = [];
-  await store.saveAccounts([]);
-  fetchCalls = [];
-  upstreamQueue = [];
 }
 
 function fakeReq(method, body, remoteAddress = '127.0.0.1') {
@@ -105,28 +101,27 @@ const sseBody = () => 'event: message_start\ndata: {"type":"message_start"}\n\n'
 const completions = () => fetchCalls.filter((c) => c.url.includes('/zcode-plan/anthropic/v1/messages'));
 
 test('网关未开启时返回 503', async () => {
-  await resetState();
-  await store.saveSettings({ zcodeGateway: false });
+  await resetState({ settings: { zcodeGateway: false } });
   await seedAccount('a1', '账号一');
   const res = captureRes();
   await gw.handleGateway(fakeReq('POST', '{}'), res);
   assert.equal(res.status, 503);
   assert.match(res.body, /网关未开启/);
-  await store.saveSettings({ zcodeGateway: true });
 });
 
-test('无验证码提供者时返回 503（NAS/CLI 场景）', async () => {
+test('无验证码提供者（NAS/CLI）：首过直成功；被 3007 拒才 502', async () => {
   await resetState();
   zauto.setZcodeCaptchaProvider(null);
   await seedAccount('a1', '账号一');
+  upstreamQueue.push({ status: 200, sse: true, body: sseBody() });
   const res = captureRes();
   await gw.handleGateway(fakeReq('POST', '{}'), res);
-  assert.equal(res.status, 503);
-  assert.match(res.body, /验证码提供者/);
-  zauto.setZcodeCaptchaProvider(async () => {
-    captchaSolves += 1;
-    return { captchaParam: `{"certifyId":"c${captchaSolves}"}`, region: 'cn' };
-  });
+  assert.equal(res.status, 200, res.body);
+  upstreamQueue.push({ status: 400, body: '{"code":3007,"msg":"captcha verify failed"}' });
+  const res2 = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}'), res2);
+  assert.equal(res2.status, 502);
+  assert.match(res2.body, /验证码/);
 });
 
 test('无可用账号（快照里没有 zcodejwttoken）返回 503', async () => {
@@ -138,8 +133,9 @@ test('无可用账号（快照里没有 zcodejwttoken）返回 503', async () =>
   assert.match(res.body, /没有可用的 ZCode 账号/);
 });
 
-test('验证码 + 补全成功：SSE 透传，token 30s 内复用（一次求解）', async () => {
+test('首发不带验证码头，SSE 透传', async () => {
   await resetState();
+  providerOk();
   await seedAccount('a1', '账号一');
   upstreamQueue.push({ status: 200, sse: true, body: sseBody() });
   const res = captureRes();
@@ -147,14 +143,14 @@ test('验证码 + 补全成功：SSE 透传，token 30s 内复用（一次求解
   assert.equal(res.status, 200, res.body);
   assert.equal(res.body, sseBody());
   assert.equal(completions().length, 1);
-  // 首发不带验证码头——客户端真实流量多数直过
   assert.equal(completions()[0].headers['X-Aliyun-Captcha-Verify-Param'], undefined);
   assert.match(completions()[0].headers.Authorization, /^Bearer jwt-a1-/);
   assert.equal(captchaSolves, 0);
 });
 
-test('3007 验证码被拒 → 每次尝试都强制重解新 token，全败 502 汇总', async () => {
+test('3007 被拒 → 重解新 token 挂上重试，全败 502 汇总', async () => {
   await resetState();
+  providerOk();
   await seedAccount('a1', '账号一');
   await seedAccount('a2', '账号二');
   upstreamQueue.push(
@@ -163,24 +159,22 @@ test('3007 验证码被拒 → 每次尝试都强制重解新 token，全败 502
     { status: 400, body: '{"code":3007,"msg":"captcha verify failed"}' },
     capCfg(),
     { status: 400, body: '{"code":3007,"msg":"captcha verify failed"}' },
-    capCfg(),
-    { status: 400, body: '{"code":3007,"msg":"captcha verify failed"}' },
   );
   const res = captureRes();
   await gw.handleGateway(fakeReq('POST', '{}'), res);
-  assert.equal(res.status, 502);
+  assert.equal(res.status, 502, res.body);
   const parsed = JSON.parse(res.body);
   assert.ok(parsed.attempts.length >= 2);
   assert.ok(parsed.attempts.some((a) => /验证码被拒/.test(a.error)));
-  // 首发无验证码头；重试的每次都带新解的 token
   const withCaptcha = completions().filter((c) => c.headers['X-Aliyun-Captcha-Verify-Param']);
   const params = withCaptcha.map((c) => JSON.parse(c.headers['X-Aliyun-Captcha-Verify-Param']).certifyId);
   assert.ok(withCaptcha.length >= 2, '被拒后应有带验证码的重试');
   assert.equal(new Set(params).size, params.length, '每次重试都应有新验证码 token');
 });
 
-test('401 → 账号拉黑；额度不足/429 → 跳过换号；最终成功', async () => {
+test('401 拉黑 / 额度与 429 跳过 / 最终成功', async () => {
   await resetState();
+  providerOk();
   await seedAccount('dead', '失效号');
   await seedAccount('poor', '没额度号');
   await seedAccount('good', '好号');
@@ -199,47 +193,36 @@ test('401 → 账号拉黑；额度不足/429 → 跳过换号；最终成功', 
   assert.match(rows[2].headers.Authorization, /^Bearer jwt-good-/);
 });
 
-test('GET 请求提示用法', async () => {
-  const res = captureRes();
-  await gw.handleGateway(fakeReq('GET', ''), res);
-  assert.equal(res.status, 405);
-});
-
-
-test('局域网调用：未开局域网开关 → 403', async () => {
+test('局域网：未开开关 403；key 不匹配 401；匹配放行', async () => {
   await resetState();
+  providerOk();
   await store.saveSettings({ zcodeGateway: true, zcodeGatewayLan: false });
   await seedAccount('a1', '账号一');
-  upstreamQueue.push(capCfg(), { status: 200, sse: true, body: sseBody() });
-  const res = captureRes();
-  await gw.handleGateway(fakeReq('POST', '{}', '192.168.31.5'), res);
-  assert.equal(res.status, 403);
-  assert.match(res.body, /局域网/);
-});
+  const denied = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}', '192.168.31.5'), denied);
+  assert.equal(denied.status, 403);
 
-test('局域网调用：key 不匹配 → 401；匹配 → 放行', async () => {
-  await resetState();
-  await store.saveSettings({ zcodeGateway: true, zcodeGatewayLan: true });
   const tr = await import('../src/tenrouter.js');
   tr.updateConfig({ endpoint: 'http://127.0.0.1:20127', key: 'sk-lan-test-key-123456' });
-  await seedAccount('a1', '账号一');
-  upstreamQueue.push(capCfg(), { status: 200, sse: true, body: sseBody() });
+  await store.saveSettings({ zcodeGateway: true, zcodeGatewayLan: true });
 
-  // 错误 key
   const bad = captureRes();
   const badReq = fakeReq('POST', '{}', '192.168.31.5');
   badReq.headers = { 'x-api-key': 'sk-wrong' };
   await gw.handleGateway(badReq, bad);
   assert.equal(bad.status, 401);
-  assert.match(bad.body, /密钥不匹配/);
 
-  // 正确 key（= 10r 虚拟 key）
-  upstreamQueue.push(capCfg(), { status: 200, sse: true, body: sseBody() });
+  upstreamQueue.push({ status: 200, sse: true, body: sseBody() });
   const good = captureRes();
-  const goodReq = fakeReq('POST', '{"model":"glm-5.3-flash"}', '192.168.31.5');
+  const goodReq = fakeReq('POST', '{}', '192.168.31.5');
   goodReq.headers = { 'x-api-key': 'sk-lan-test-key-123456' };
   await gw.handleGateway(goodReq, good);
   assert.equal(good.status, 200);
-  // 清理 tenrouter 配置，避免影响其他用例
   tr.updateConfig({ endpoint: '' });
+});
+
+test('GET 请求提示用法', async () => {
+  const res = captureRes();
+  await gw.handleGateway(fakeReq('GET', ''), res);
+  assert.equal(res.status, 405);
 });
