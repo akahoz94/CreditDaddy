@@ -172,26 +172,43 @@ test('3007 被拒 → 重解新 token 挂上重试，全败 502 汇总', async (
   assert.equal(new Set(params).size, params.length, '每次重试都应有新验证码 token');
 });
 
-test('200 包裹的业务错误：1005 跳过换号、未知码 502 透传', async () => {
+test('200 包裹的 1005：探得 0 额度 → 打标持久化、不再轮换', async () => {
   await resetState();
   providerOk();
   await seedAccount('busy', '占用号');
   await seedAccount('weird', '怪码号');
-  await seedAccount('good', '好号');
   upstreamQueue.push(
     { status: 200, body: '{"code":1005,"msg":"exceed quota limit"}' },
+    { status: 200, body: "{\"code\":0,\"data\":{\"limits\":[{\"type\":\"TOKENS_LIMIT\",\"usage\":100000000,\"currentValue\":100000000,\"remaining\":0}]}}" },
     { status: 200, body: '{"code":4242,"msg":"未知业务错误"}' },
   );
   const res = captureRes();
   await gw.handleGateway(fakeReq('POST', '{}'), res);
-  // 1005 → 跳过换号；未知业务码 → 即时 502 透传（不盲目烧完账号池）
-  assert.equal(res.status, 502, res.body);
-  assert.match(res.body, /未知业务错误/);
+  const st = await gw.gatewayStatus();
+  assert.ok((st.exhausted || []).some((e) => e.name === '占用号'), '1005 应打标为额度耗尽');
+  const persisted = JSON.parse(fs.readFileSync(path.join(MHOME, 'state.json'), 'utf8'));
+  assert.ok(persisted.zcodeGatewayExhausted && persisted.zcodeGatewayExhausted.busy, '打标应持久化到 state.json');
+});
+
+test('200 包裹的 1005 但仍有额度 → 瞬时短冷却继续用', async () => {
+  await resetState();
+  providerOk();
+  await seedAccount('busy', '瞬时号');
+  await seedAccount('good', '好号');
+  upstreamQueue.push(
+    { status: 200, body: '{"code":1005,"msg":"exceed quota limit"}' },
+    { status: 200, body: "{\"code\":0,\"data\":{\"limits\":[{\"type\":\"TOKENS_LIMIT\",\"usage\":100000000,\"currentValue\":99500000,\"remaining\":500000}]}}" },
+    { status: 200, body: '{"code":0,"data":[]}' },
+    { status: 200, sse: true, body: sseBody() },
+  );
+  const res = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}'), res);
+  assert.equal(res.status, 200, res.body);
   const rows = completions();
   assert.match(rows[0].headers.Authorization, /^Bearer jwt-busy-/);
-  assert.match(rows[1].headers.Authorization, /^Bearer jwt-weird-/);
+  assert.match(rows[1].headers.Authorization, /^Bearer jwt-good-/);
   const st = await gw.gatewayStatus();
-  assert.ok(st.cooling.includes('占用号'));
+  assert.equal((st.exhausted || []).length, 0, '有额度的瞬时拒绝不应打标');
 });
 
 test('401 拉黑 / 额度与 429 跳过 / 最终成功', async () => {

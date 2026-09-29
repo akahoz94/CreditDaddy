@@ -16,7 +16,7 @@
  * daemon 加绑定/密钥，见 README）。NAS/纯 CLI 环境没有验证码提供者，网关开不了。
  */
 
-import { claimToken, zaiHeaders, fetchCaptchaConfig, fetchJsonRace } from './zcodeClient.js';
+import { claimToken, zaiHeaders, fetchCaptchaConfig, fetchJsonRace, fetchZcodeQuota } from './zcodeClient.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +35,7 @@ import { gatewayKey as tenrouterGatewayKey } from './tenrouter.js';
 let completionProvider = null;
 export function setZcodeCompletionProvider(fn) { completionProvider = typeof fn === 'function' ? fn : null; }
 export function getZcodeCompletionProvider() { return completionProvider; }
-import { loadAccounts, loadSettings, saveSettings } from './store.js';
+import { loadAccounts, loadSettings, saveSettings, loadState, saveState } from './store.js';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { logger } from './logger.js';
@@ -69,6 +69,7 @@ export function __resetForTests() {
   rrIndex = 0;
   cooling.clear();
   dead.clear();
+  quotaCache.clear();
   captchaCache = null;
   stats.lastCallAt = null;
   stats.calls = 0;
@@ -79,10 +80,12 @@ function markDead(id) { dead.add(id); cooling.set(id, Number.MAX_SAFE_INTEGER); 
 /** 可参与轮换的账号（有可解析 plan JWT、未冷却/未拉黑），按轮转序排列 */
 async function rotationQueue() {
   const all = (await loadAccounts()).filter((a) => a.provider === 'zcode');
+  await hydrateMarks();
   const now = Date.now();
   const ready = [];
   for (const a of all) {
     if (dead.has(a.id)) continue;
+    if (isQuotaExhausted(a.id)) continue; // 0 额度打标，不再轮换
     if ((cooling.get(a.id) || 0) > now) continue;
     try { claimToken(a); ready.push(a); } catch { /* 快照里没有 plan JWT，跳过 */ }
   }
@@ -97,6 +100,48 @@ let captchaCache = null; // { param, region, at }
 
 // 调用统计（进程内）：面板「10Router 已接入」活标签的数据源
 const stats = { lastCallAt: null, calls: 0, lastAccount: null };
+
+// 额度打标：0 额度账号不再轮换（额度缓存 10 分钟，到期自动重探；
+// 1005/1113 失败时也会即时探测确认——剩余>0 视为瞬时错误继续用）
+const QUOTA_TTL_MS = 10 * 60_000;
+const quotaCache = new Map(); // accountId → { remaining, at }
+
+let marksHydrated = false;
+async function hydrateMarks() {
+  if (marksHydrated) return;
+  marksHydrated = true;
+  try {
+    const st = await loadState();
+    const saved = st?.zcodeGatewayExhausted || {};
+    for (const [id, e] of Object.entries(saved)) {
+      if (e && Date.now() - e.at < QUOTA_TTL_MS && !quotaCache.has(id)) quotaCache.set(id, e);
+    }
+  } catch { /* 状态读不到就从零开始 */ }
+}
+
+async function persistMark(accountId, entry) {
+  try {
+    const st = await loadState();
+    const saved = st?.zcodeGatewayExhausted || {};
+    saved[accountId] = entry;
+    await saveState({ ...st, zcodeGatewayExhausted: saved });
+  } catch { /* 持久化失败不影响内存态 */ }
+}
+
+function isQuotaExhausted(id) {
+  const q = quotaCache.get(id);
+  return Boolean(q && Date.now() - q.at < QUOTA_TTL_MS && q.remaining <= 0);
+}
+
+async function probeQuota(account) {
+  const r = await fetchZcodeQuota(account).catch(() => null);
+  const remaining = Number(r?.remaining);
+  if (Number.isFinite(remaining)) {
+    quotaCache.set(account.id, { remaining, at: Date.now() });
+    return remaining;
+  }
+  return null;
+}
 
 async function ensureCaptcha(force = false) {
   if (!force && captchaCache && Date.now() - captchaCache.at < CAPTCHA_CACHE_TTL_MS) return captchaCache;
@@ -325,8 +370,19 @@ export async function handleGateway(req, res) {
             continue;
           }
           if (isExhausted(200, text)) {
-            markCooling(account.id, 30 * 60_000);
-            attempted.push({ account: label, ok: false, error: '额度不足/无资源包' });
+            const remaining = await probeQuota(account).catch(() => null);
+            if (remaining === null || remaining <= 0) {
+              // 0 额度（或探不到）→ 打标（持久化到 state.json，重启不复轮换）
+              const entry = { remaining: remaining ?? 0, at: Date.now() };
+              quotaCache.set(account.id, entry);
+              await persistMark(account.id, entry);
+              attempted.push({ account: label, ok: false, error: `额度耗尽（剩余 ${remaining ?? '?'}），已打标` });
+              logger.warn('ZCODE-GW', `${label} 额度耗尽，打标不再轮换`);
+            } else {
+              // 还有额度却被拒 → 瞬时错误，短冷却继续用
+              markCooling(account.id, 2 * 60_000);
+              attempted.push({ account: label, ok: false, error: `额度接口瞬时拒绝（剩余 ${remaining}）` });
+            }
             continue;
           }
           logger.warn('ZCODE-GW', `${label} 上游 200 业务错误：${text.slice(0, 140)}`);
@@ -432,6 +488,9 @@ export async function gatewayStatus() {
       calls: stats.calls,
       lastAccount: stats.lastAccount,
     },
+    exhausted: all
+      .filter((a) => isQuotaExhausted(a.id))
+      .map((a) => ({ id: a.id, name: a.name || a.uid || a.id, remaining: quotaCache.get(a.id)?.remaining ?? 0 })),
     accounts: all.length,
     accountsWithJwt: withJwt,
     cooling: all.filter((a) => (cooling.get(a.id) || 0) > now).map((a) => a.name || a.uid || a.id),
