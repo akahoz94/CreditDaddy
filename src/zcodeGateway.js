@@ -72,6 +72,9 @@ async function rotationQueue() {
 
 let captchaCache = null; // { param, region, at }
 
+// 调用统计（进程内）：面板「10Router 已接入」活标签的数据源
+const stats = { lastCallAt: null, calls: 0, lastAccount: null };
+
 async function ensureCaptcha(force = false) {
   if (!force && captchaCache && Date.now() - captchaCache.at < CAPTCHA_CACHE_TTL_MS) return captchaCache;
   const provider = getZcodeCaptchaProvider();
@@ -144,6 +147,9 @@ export async function handleGateway(req, res) {
     return res.end(JSON.stringify({ error: '没有可用的 ZCode 账号（需要账号快照里有 zcodejwttoken：在 ZCode 重新登录后本机导入）' }));
   }
 
+  stats.lastCallAt = new Date().toISOString();
+  stats.calls += 1;
+
   const attempted = [];
   for (let i = 0; i < Math.min(MAX_ATTEMPTS, queue.length * 2); i++) {
     const account = queue[i % queue.length];
@@ -210,6 +216,7 @@ export async function handleGateway(req, res) {
         continue;
       }
       logger.info('ZCODE-GW', `${label} 页内整链补全成功（${r.status}）`);
+      stats.lastAccount = label;
       cooling.delete(account.id);
       res.writeHead(r.status, { 'Content-Type': r.contentType || 'application/json', 'Cache-Control': 'no-cache' });
       res.end(r.body);
@@ -249,6 +256,7 @@ export async function handleGateway(req, res) {
 
     if (upstream.ok) {
       logger.info('ZCODE-GW', `${label} 补全成功（${upstream.status}）`);
+      stats.lastAccount = label;
       cooling.delete(account.id);
       const out = { 'Content-Type': upstream.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-cache' };
       res.writeHead(upstream.status, out);
@@ -319,6 +327,11 @@ export async function gatewayStatus() {
   return {
     enabled,
     hasCaptcha,
+    stats: {
+      lastCallAt: stats.lastCallAt,
+      calls: stats.calls,
+      lastAccount: stats.lastAccount,
+    },
     accounts: all.length,
     accountsWithJwt: withJwt,
     cooling: all.filter((a) => (cooling.get(a.id) || 0) > now).map((a) => a.name || a.uid || a.id),

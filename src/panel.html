@@ -1268,7 +1268,9 @@ function renderStatus() {
       + ' <button class="btn" id="btn-zproxy" style="margin-left:4px" title="设置 ZCode 出口用的 http 代理（留空则清除；不设置时使用 HTTPS_PROXY 环境变量）">代理：' + esc(pu || (state.zHasEnvProxy ? '环境变量' : '未设置')) + '</button>'
       + ' <button class="btn" id="btn-zgw" style="margin-left:4px" title="开启后本机 /gateway/v1/messages 提供 Start Plan（GLM-5.3-Flash 体验包）补全；10Router 建一个 anthropic-compatible 节点指向 http://127.0.0.1:' + location.port + '/gateway 即可调用。需要桌面版（隐藏窗口过验证码）">'
       + (state.zGateway === true ? '额度网关：开' : '额度网关：关') + '</button>'
+      + (state.zGateway === true ? ' <span class="chip on" style="margin-left:6px">10Router 已接入</span>' : '')
       + (state.zGateway === true ? ' <span class="ver" style="margin-left:6px">POST http://127.0.0.1:' + location.port + '/gateway/v1/messages</span>' : '')
+      + (state.zGateway === true && state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' <span class="ver" style="margin-left:6px">最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · ' + state.zGatewayStats.calls + ' 次 · ' + esc(state.zGatewayStats.lastAccount || '-') + '</span>' : (state.zGateway === true ? ' <span class="ver" style="margin-left:6px">尚未有调用</span>' : ''))
       + zcodeClientChip(s);
   } else if (hasIntl && !s.riskIdentity && umidOffer(s)) {
     n.style.display = '';
@@ -1686,7 +1688,10 @@ function renderTenrouter() {
   const box = $('tr-panel');
   const c = tr.config;
   if (!c) { box.innerHTML = '<div class="empty">加载中…</div>'; return; }
-  if (!c.configured) { box.innerHTML = trSetupHtml(); return; }
+  const gwLine = state.zGateway === true
+    ? '<div class="empty" style="margin-bottom:10px">ZCode 额度网关：<b>运行中</b>' + (state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' · 最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · ' + state.zGatewayStats.calls + ' 次 · 最后用号 ' + esc(state.zGatewayStats.lastAccount || '-') : '（尚未有调用）') + ' — 体验包模型 <code>zcode-free/glm-5.3-flash</code></div>'
+    : '';
+  if (!c.configured) { box.innerHTML = gwLine + trSetupHtml(); return; }
   const list = (tr.quotas && tr.quotas.connections) || [];
   const low = list.filter((x) => x.isActive && !x.error && quotaLow(x)).length;
   const failed = list.filter((x) => x.error).length;
@@ -2722,6 +2727,7 @@ function applyView() {
   $('view-dash').classList.toggle('active', state.view === 'dash');
   $('view-prod').classList.toggle('active', state.view !== 'dash' && state.view !== 'tenrouter');
   $('view-10r').classList.toggle('active', state.view === 'tenrouter');
+  if (state.view === 'tenrouter') loadZGateway();
   if (state.view === 'tenrouter' && tr.config && tr.config.configured && !tr.quotas && !tr.loading) loadTrQuotas();
   render();
   renderStatus();
