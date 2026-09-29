@@ -195,6 +195,8 @@ test('WorkBuddy token 按签发方识别国内版 / 国际版', () => {
   assert.equal(cn.host, 'www.codebuddy.cn');
   assert.equal(wbClient.inspectToken(fakeJwt({ iss: 'https://www.workbuddy.cn/auth/realms/copilot' })).provider, 'workbuddy');
   assert.equal(wbClient.inspectToken(fakeJwt({ iss: 'https://www.codebuddy.ai/auth/realms/x' })).provider, 'workbuddy-intl');
+  assert.equal(wbClient.inspectToken(fakeJwt({ iss: 'https://www.workbuddy.ai/auth/realms/x' })).provider, 'workbuddy-intl');
+  assert.equal(wbClient.inspectToken(fakeJwt({ iss: 'https://workbuddy.cc/auth/realms/x' })).provider, 'workbuddy-intl');
   assert.equal(wbClient.inspectToken('dt-not-a-jwt').provider, null);
   assert.equal(wbClient.apiHost({ provider: 'workbuddy', token: fakeJwt({ iss: 'https://copilot.tencent.com/auth' }), meta: {} }), 'www.codebuddy.cn');
 });
@@ -599,6 +601,19 @@ test('WorkBuddy 浏览器登录：state → 等 token → 等账号 → 组装�
     assert.deepEqual(input.meta.session.accounts.map((a) => a.uid), ['uid-1']);
     assert.equal(input.meta.session.allAccounts.length, 2);
     assert.ok(!('accessToken' in input.meta.session.auth) && !('refreshToken' in input.meta.session.auth));
+  } finally { m.restore(); }
+});
+
+test('WorkBuddy 国际版浏览器登录走 www.workbuddy.ai（不是 CodeBuddy 国际站）', async () => {
+  const wa = await import('../src/workbuddyAuth.js');
+  const m = mockFetch([
+    [/auth\/state\?platform=WorkBuddy$/, () => ({ body: { code: 0, data: { state: 'st', authUrl: 'https://www.workbuddy.ai/login?platform=WorkBuddy&state=st' } } })],
+  ]);
+  try {
+    const s = await wa.startWorkbuddyLogin('workbuddy-intl');
+    assert.equal(s.data.host, 'www.workbuddy.ai');
+    assert.match(m.calls[0].url, /^https:\/\/www\.workbuddy\.ai\//);
+    assert.equal(m.calls[0].init.headers['X-Domain'], 'www.workbuddy.ai');
   } finally { m.restore(); }
 });
 

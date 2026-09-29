@@ -10,7 +10,7 @@
  *
  * WorkBuddy 登录 token 是 Keycloak JWT，签发方决定归属与 API 域名：
  *   www.codebuddy.cn / www.workbuddy.cn / copilot.tencent.com → 国内版
- *   www.codebuddy.ai / www.workbuddy.ai                       → 国际版
+ *   www.codebuddy.ai / www.workbuddy.ai / workbuddy.cc        → 国际版
  *
  * token 只在过期或 401 时刷新：刷新会轮换 refreshToken，若该账号正登录在 WorkBuddy
  * 客户端里，主动刷新可能让客户端手里的旧 refreshToken 失效。
@@ -41,7 +41,7 @@ export function inspectToken(token) {
   let host = null;
   try { host = new URL(c.iss).host; } catch {}
   let provider = null;
-  if (host && /(codebuddy|workbuddy)\.ai$/.test(host)) provider = 'workbuddy-intl';
+  if (host && /(codebuddy|workbuddy)\.ai$|workbuddy\.cc$/.test(host)) provider = 'workbuddy-intl';
   else if (host && /(codebuddy|workbuddy)\.cn$|copilot\.tencent\.com$/.test(host)) provider = 'workbuddy';
   return {
     provider,

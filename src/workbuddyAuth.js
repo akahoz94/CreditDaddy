@@ -9,13 +9,14 @@
  *
  * 3~5 组装成与 workbuddy-desktop.info 相同结构的会话，经 sessionToAccount 入库，
  * 因此浏览器登录的账号与「本机导入」一样可签到、查积分、一键切换 WorkBuddy 客户端。
- * 国内版走 www.codebuddy.cn（WorkBuddy 客户端默认域名），国际版走 www.codebuddy.ai。
+ * 国内版走 www.codebuddy.cn；国际版走 www.workbuddy.ai（WorkBuddy 海外版客户端的站点——
+ * www.codebuddy.ai 是 CodeBuddy 国际版，登录页不是 WorkBuddy 的）。
  */
 
 import { FETCH_TIMEOUT_MS } from './constants.js';
 import { sessionToAccount } from './workbuddyLocal.js';
 
-const HOSTS = { workbuddy: 'www.codebuddy.cn', 'workbuddy-intl': 'www.codebuddy.ai' };
+const HOSTS = { workbuddy: 'www.codebuddy.cn', 'workbuddy-intl': 'www.workbuddy.ai' };
 const PLATFORM = 'WorkBuddy';
 const USER_AGENT = 'CLI/2.108.1 CodeBuddy/2.108.1';
 const RETRY_FETCH_TOKEN = 11217;
