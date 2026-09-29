@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { dataDir } from './store.js';
 import { installedUmid, CLI_RISK_ENV } from './qoderUmid.js';
 
@@ -32,17 +32,86 @@ const VARIANTS = [
 
 const exists = (p) => { try { return fs.existsSync(p); } catch { return false; } };
 
-function candidateResourceDirs(v) {
+const versionParts = (s) => s.split('.').map((n) => Number(n) || 0);
+function compareVersionDesc(a, b) {
+  const x = versionParts(a), y = versionParts(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (y[i] || 0) - (x[i] || 0);
+  }
+  return 0;
+}
+
+/**
+ * 一个安装目录下的 resources 候选：0.3+ 的启动器把实际运行的版本放在
+ * .qoder-versions\<ver>\resources（按版本从新到旧），顶层 resources 可能只是首装时的旧版残留。
+ */
+function resourceDirsIn(installDir) {
+  const root = path.join(installDir, '.qoder-versions');
+  let versions = [];
+  try {
+    versions = fs.readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^\d+(\.\d+)*$/.test(e.name))
+      .map((e) => e.name)
+      .sort(compareVersionDesc);
+  } catch {}
+  return [...versions.map((ver) => path.join(root, ver, 'resources')), path.join(installDir, 'resources')];
+}
+
+/**
+ * 卸载注册表里登记的安装目录（自定义安装路径）。DisplayName 形如「Qoder 0.4.1」/「Qoder CN 0.4.1」，
+ * 不匹配「Qoder IDE」（IDE 不带 runtime-info）。走 PowerShell 以正确读出中文路径；结果缓存 5 分钟。
+ */
+let registryCache = { at: 0, entries: null };
+function registryInstallDirs(v) {
+  if (process.platform !== 'win32') return [];
+  if (!registryCache.entries || Date.now() - registryCache.at > 5 * 60_000) {
+    let entries = [];
+    try {
+      const script = "$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+        + "Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue"
+        + " | Where-Object { $_.DisplayName -like 'Qoder*' }"
+        + ' | Select-Object DisplayName,InstallLocation,UninstallString,DisplayIcon | ConvertTo-Json -Compress';
+      const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+        { encoding: 'utf8', windowsHide: true, timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      if (out) entries = [].concat(JSON.parse(out));
+    } catch {}
+    registryCache = { at: Date.now(), entries };
+  }
+  const nameRe = new RegExp(`^${v.installName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s+v?\\d[\\d.]*)?$`, 'i');
+  const exeDir = (s) => {
+    const m = String(s || '').match(/^\s*"([^"]+)"|^\s*([^,]+?\.exe)/i);
+    return m ? path.dirname(m[1] || m[2]) : null;
+  };
+  const dirs = [];
+  for (const e of registryCache.entries) {
+    if (!nameRe.test(String(e?.DisplayName || '').trim())) continue;
+    const dir = (e.InstallLocation && String(e.InstallLocation).trim()) || exeDir(e.UninstallString) || exeDir(e.DisplayIcon);
+    if (dir) dirs.push(dir.replace(/[\\/]+$/, ''));
+  }
+  return dirs;
+}
+
+function candidateResourceDirs(v, { registry = false } = {}) {
   const home = os.homedir();
   if (process.platform === 'win32') {
     const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    const pf = process.env.ProgramFiles || 'C:\\Program Files';
+    const installDirs = [
+      path.join(local, 'Programs', v.installName),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', v.installName),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', v.installName),
+      ...(registry ? registryInstallDirs(v) : []),
+    ];
+    const seen = new Set();
+    const unique = installDirs.filter((d) => {
+      const k = path.resolve(d).toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
     return [
-      path.join(local, 'Programs', v.installName, 'resources'),
-      path.join(pf, v.installName, 'resources'),
+      ...unique.flatMap(resourceDirsIn),
       // AppX 风格（微软商店版 / MSIX）：Qoder_*.msix 通常在 Start Menu 快捷方式指向的位置
       path.join(local, 'Microsoft', 'WindowsApps', v.installName),
-      path.join(local, 'npm-cache', 'electron', 'bin', 'node.exe'),   // npm 全局安装可能放在这里
       // Squirrel 更新目录：Electron 应用的临时升级包
       path.join(local, 'electron', 'updates', v.installName),
     ];
@@ -78,12 +147,25 @@ function readVersion(resourcesDir) {
   return null;
 }
 
+const RUNTIME_INFO_EXE = process.platform === 'win32' ? 'runtime-info.exe' : 'runtime-info';
+const runtimeInfoIn = (resources) => (exists(path.join(resources, 'umid', RUNTIME_INFO_EXE)) ? path.join(resources, 'umid', RUNTIME_INFO_EXE) : null);
+const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+
+/** 在候选里选 resources：优先带 runtime-info 的（风控身份靠它），否则第一个存在的 */
+function pickResources(dirs) {
+  const existing = dirs.filter(isDir);
+  return existing.find((d) => runtimeInfoIn(d)) || existing[0] || null;
+}
+
 /** 探测本机已安装的 Qoder 客户端（国际版 / 国内版） */
 export function detectQoderApps() {
   return VARIANTS.map((v) => {
-    const resources = candidateResourceDirs(v).find((d) => exists(d)) || null;
-    const exe = process.platform === 'win32' ? 'runtime-info.exe' : 'runtime-info';
-    const runtimeInfo = resources && exists(path.join(resources, 'umid', exe)) ? path.join(resources, 'umid', exe) : null;
+    let resources = pickResources(candidateResourceDirs(v));
+    // 默认位置没找到可用的 runtime-info → 再查卸载注册表里的实际安装目录（自定义路径）
+    if (process.platform === 'win32' && !(resources && runtimeInfoIn(resources))) {
+      resources = pickResources(candidateResourceDirs(v, { registry: true })) || resources;
+    }
+    const runtimeInfo = resources ? runtimeInfoIn(resources) : null;
     const data = userDataDir(v);
     return {
       provider: v.provider,
@@ -207,8 +289,24 @@ function riskRunner(provider) {
   const apps = detectQoderApps().filter((a) => a.runtimeInfo);
   const app = apps.find((a) => a.provider === provider) || apps[0];
   if (app) return { exe: app.runtimeInfo, env: (VARIANTS.find((v) => v.provider === provider) || VARIANTS[0]).riskEnv, source: 'app' };
-  const cli = installedUmid();
+  const cli = installedUmid() || bundledCliUmid(provider);
   if (cli) return { exe: cli.path, env: CLI_RISK_ENV[provider] ?? CLI_RISK_ENV.qoder, source: 'cli' };
+  return null;
+}
+
+/** Windows：客户端自带的 qodercli 会把设备身份组件解压到 ~\.qoder\.bin\umid-win32-<arch>-*\（国内版 ~\.qoder-cn） */
+function bundledCliUmid(provider) {
+  if (process.platform !== 'win32') return null;
+  const homes = provider === 'qoder-cn' ? ['.qoder-cn', '.qoder'] : ['.qoder', '.qoder-cn'];
+  for (const h of homes) {
+    const bin = path.join(os.homedir(), h, '.bin');
+    let dirs = [];
+    try { dirs = fs.readdirSync(bin).filter((n) => n.startsWith('umid-win32-')); } catch {}
+    for (const d of dirs) {
+      const exe = path.join(bin, d, RUNTIME_INFO_EXE);
+      if (exists(exe)) return { path: exe };
+    }
+  }
   return null;
 }
 
