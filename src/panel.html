@@ -1832,6 +1832,7 @@ function trForm() {
   return {
     endpoint: $('tr-endpoint').value.trim(),
     key: $('tr-key').value.trim(),
+    adminPassword: $('tr-admin-pw').value, // 留空 = 服务端保持原值
     syncEnabled: $('tr-auto').checked,
     sources: [...document.querySelectorAll('#tr-sources input[data-src]:checked')].map((x) => x.dataset.src),
   };
