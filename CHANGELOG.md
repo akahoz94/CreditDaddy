@@ -16,6 +16,8 @@
   - `fetchJsonRace` 支持调用方 AbortSignal 合并（流式转发可随客户端断开中止上游）。
   - 单测 `zcode-gateway.test.js` 7 例（开关门 / 无提供者 / 无凭据账号 / SSE 透传与 token 缓存 / 3007 重解换号 / 401 拉黑与额度跳过 / 方法提示），全仓 109 例绿。
 
+  - **实测打通（09-29）**：CreditDaddy 账号 JWT 直接注入 zcode-api（凭据文件 AES-GCM 本机派生 key 可离线构造，免 auth login），`--cli serve` 起服后补全 **HTTP 200**——体验包（GLM-5.3-Flash）经其求解器可消费；「客户端当前」账号返回 1005（客户端会话占用），非当前账号正常。面板开关 / 轮换 / 局域网鉴权全部就绪。
+
 - **接入美团「妙手」（CatPaw）产品线：额度 / 版本 / 用户信息 + 本机切号**：
   - **桌面客户端凭据解密**：自动定位 `%APPDATA%\catpaw-moon\catx-credential.json`，其 `ssoTokenEnc` 为 AES-256-GCM 密文（`iv‖tag‖ciphertext` base64），密钥由本机 `HKLM\...\Cryptography\MachineGuid` 派生（`sha256(machineId + ":catpaw-desk-token-v2")`），全程内存计算、不改动客户端存储格式即可读写。
   - **桌面网关直连**：额度 / 套餐版本 / 用户信息走 `https://catx.nocode.cn/api/gateway/*`（`auth/current-user` + `credit/balance`，token 置于 `X-Auth-Token` 头）——网页端 `credit.catpaw.meituan.com` 的三个接口只认浏览器 Cookie，daemon 不可用，网关路径为纯 token 鉴权，实测可用。
