@@ -2263,7 +2263,7 @@ function openAdd(product) {
 async function localScan() {
   const box = $('scan-result');
   $('scan-status').textContent = '扫描中（最多约 10 秒）…';
-  box.innerHTML = '<div class="hint">正在读取本机 Qoder 客户端凭据…</div>';
+  box.innerHTML = '<div class="hint">正在读取本机客户端凭据（Qoder / WorkBuddy / ZCode / mirasim / 妙手）…</div>';
   try {
     const r = await api('/api/local/scan', { method: 'POST' });
     $('scan-status').textContent = '';

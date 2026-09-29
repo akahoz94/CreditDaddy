@@ -395,7 +395,8 @@ export async function collectSource(id, { endpoint, paths = sourcePaths(), catpa
   if (id === 'catpaw') {
     const accounts = (await loadAccounts()).filter((a) => a.provider === 'catpaw' && a.token);
     if (!accounts.length) return { entries: [], notes: [], files: 0 };
-    const r = await collectCatpaw(accounts, catpawModel || 'unknown', sentTotals || {});
+    // catx 网关当前只出 GLM-5.3-FlashX——未配置时用真实模型名，避免 10r 里显示「未知」
+    const r = await collectCatpaw(accounts, catpawModel || 'GLM-5.3-FlashX', sentTotals || {});
     return { ...r, files: accounts.length };
   }
   const files = paths[id] || [];
