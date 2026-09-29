@@ -70,6 +70,7 @@ export function __resetForTests() {
   cooling.clear();
   dead.clear();
   quotaCache.clear();
+  marksHydrated = false;
   captchaCache = null;
   stats.lastCallAt = null;
   stats.calls = 0;
@@ -92,6 +93,29 @@ async function rotationQueue() {
   if (!ready.length) return [];
   rrIndex = ((rrIndex % ready.length) + ready.length) % ready.length;
   return [...ready.slice(rrIndex), ...ready.slice(0, rrIndex)];
+}
+
+/** 队列为空时说清原因（与 rotationQueue 同序分类）——额度耗尽不该提示「重新登录导入」 */
+async function unavailableReason() {
+  const all = (await loadAccounts()).filter((a) => a.provider === 'zcode');
+  if (!all.length) return '没有 ZCode 账号：请在 ZCode 登录后本机导入';
+  const now = Date.now();
+  const n = { dead: 0, exhausted: 0, cooling: 0, noJwt: 0 };
+  for (const a of all) {
+    if (dead.has(a.id)) n.dead++;
+    else if (isQuotaExhausted(a.id)) n.exhausted++;
+    else if ((cooling.get(a.id) || 0) > now) n.cooling++;
+    else n.noJwt++; // 未拉黑/未打标/未冷却却不在队列 → 快照里没有可解析的 plan JWT
+  }
+  if (n.noJwt === all.length) {
+    return '没有可用的 ZCode 账号（需要账号快照里有 zcodejwttoken：在 ZCode 重新登录后本机导入）';
+  }
+  const parts = [];
+  if (n.exhausted) parts.push(`${n.exhausted} 个额度耗尽（${Math.round(QUOTA_TTL_MS / 60_000)} 分钟内自动重探，无需重新登录）`);
+  if (n.cooling) parts.push(`${n.cooling} 个临时冷却中（稍后自动恢复）`);
+  if (n.dead) parts.push(`${n.dead} 个 JWT 已失效（需在 ZCode 重新登录后本机导入）`);
+  if (n.noJwt) parts.push(`${n.noJwt} 个缺少 zcodejwttoken（需在 ZCode 重新登录后本机导入）`);
+  return `没有可用的 ZCode 账号：${parts.join('；')}`;
 }
 
 // ── 验证码（与活动领取共用桌面版隐藏窗口求解器；30s 内复用同一 token） ──
@@ -305,7 +329,7 @@ export async function handleGateway(req, res) {
   const queue = await rotationQueue();
   if (!queue.length) {
     res.writeHead(503, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: '没有可用的 ZCode 账号（需要账号快照里有 zcodejwttoken：在 ZCode 重新登录后本机导入）' }));
+    return res.end(JSON.stringify({ error: await unavailableReason() }));
   }
 
   stats.lastCallAt = new Date().toISOString();
@@ -317,6 +341,8 @@ export async function handleGateway(req, res) {
   let captcha = null;
   for (let i = 0; i < Math.min(MAX_ATTEMPTS, queue.length * 2); i++) {
     const account = queue[i % queue.length];
+    // 本轮已被打标/冷却/拉黑的号不再重打（第二圈只为验证码重试准备）
+    if (dead.has(account.id) || isQuotaExhausted(account.id) || (cooling.get(account.id) || 0) > Date.now()) continue;
     const label = account.name || account.uid || account.id;
     let token;
     try { token = claimToken(account); } catch (e) {
@@ -371,12 +397,17 @@ export async function handleGateway(req, res) {
           }
           if (isExhausted(200, text)) {
             const remaining = await probeQuota(account).catch(() => null);
-            if (remaining === null || remaining <= 0) {
-              // 0 额度（或探不到）→ 打标（持久化到 state.json，重启不复轮换）
-              const entry = { remaining: remaining ?? 0, at: Date.now() };
+            if (remaining === null) {
+              // 探不到额度 ≠ 确认耗尽：不打标（否则一次查询失败就把号挡 10 分钟），只短冷却
+              markCooling(account.id, 2 * 60_000);
+              attempted.push({ account: label, ok: false, error: '额度被拒且额度查询失败，短冷却' });
+              logger.warn('ZCODE-GW', `${label} 额度被拒、额度查询失败，短冷却`);
+            } else if (remaining <= 0) {
+              // 确认 0 额度 → 打标（持久化到 state.json，重启不复轮换）
+              const entry = { remaining, at: Date.now() };
               quotaCache.set(account.id, entry);
               await persistMark(account.id, entry);
-              attempted.push({ account: label, ok: false, error: `额度耗尽（剩余 ${remaining ?? '?'}），已打标` });
+              attempted.push({ account: label, ok: false, error: `额度耗尽（剩余 ${remaining}），已打标` });
               logger.warn('ZCODE-GW', `${label} 额度耗尽，打标不再轮换`);
             } else {
               // 还有额度却被拒 → 瞬时错误，短冷却继续用

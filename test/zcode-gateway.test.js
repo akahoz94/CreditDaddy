@@ -190,6 +190,61 @@ test('200 包裹的 1005：探得 0 额度 → 打标持久化、不再轮换', 
   assert.ok(persisted.zcodeGatewayExhausted && persisted.zcodeGatewayExhausted.busy, '打标应持久化到 state.json');
 });
 
+test('1005 后额度查询失败：不误标耗尽，只短冷却', async () => {
+  await resetState();
+  providerOk();
+  await seedAccount('uncertain', '查询失败号');
+  upstreamQueue.push({ status: 200, body: '{"code":1005,"msg":"exceed quota limit"}' });
+  // 额度探测时 mock 队列已空 → fetch 抛错 → probeQuota 返回 null
+  await gw.handleGateway(fakeReq('POST', '{}'), captureRes());
+  const st = await gw.gatewayStatus();
+  assert.equal(st.exhausted.length, 0, '探不到额度不能当作确认耗尽');
+  assert.ok(st.cooling.includes('查询失败号'), '应短冷却');
+  const persisted = JSON.parse(fs.readFileSync(path.join(MHOME, 'state.json'), 'utf8'));
+  assert.ok(!persisted.zcodeGatewayExhausted?.uncertain, '不应持久化耗尽标记');
+});
+
+test('全部额度耗尽 → 503 说明额度耗尽，不提示重新登录', async () => {
+  await resetState();
+  await seedAccount('busy', '占用号');
+  upstreamQueue.push(
+    { status: 200, body: '{"code":1005,"msg":"exceed quota limit"}' },
+    { status: 200, body: "{\"code\":0,\"data\":{\"limits\":[{\"type\":\"TOKENS_LIMIT\",\"usage\":100000000,\"currentValue\":100000000,\"remaining\":0}]}}" },
+  );
+  await gw.handleGateway(fakeReq('POST', '{}'), captureRes());
+  const res = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}'), res);
+  assert.equal(res.status, 503);
+  const { error } = JSON.parse(res.body);
+  assert.match(error, /1 个额度耗尽/);
+  assert.match(error, /无需重新登录/);
+  assert.doesNotMatch(error, /zcodejwttoken/);
+});
+
+test('耗尽 / 冷却 / 拉黑 / 无 JWT 混合 → 503 分类计数', async () => {
+  await resetState();
+  await seedAccount('empty', '耗尽号');
+  await seedAccount('dead', '失效号');
+  await seedAccount('cool', '冷却号');
+  await seedAccount('nojwt', '无凭据号', false);
+  const state = JSON.parse(fs.readFileSync(path.join(MHOME, 'state.json'), 'utf8'));
+  state.zcodeGatewayExhausted = { empty: { remaining: 0, at: Date.now() } };
+  fs.writeFileSync(path.join(MHOME, 'state.json'), JSON.stringify(state));
+  upstreamQueue.push(
+    { status: 401, body: '{"code":401,"msg":"令牌已过期"}' },
+    { status: 429, body: '{"error":{"code":"429"}}' },
+  );
+  await gw.handleGateway(fakeReq('POST', '{}'), captureRes());
+  const res = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}'), res);
+  assert.equal(res.status, 503);
+  const { error } = JSON.parse(res.body);
+  assert.match(error, /1 个额度耗尽/);
+  assert.match(error, /1 个临时冷却中/);
+  assert.match(error, /1 个 JWT 已失效/);
+  assert.match(error, /1 个缺少 zcodejwttoken/);
+});
+
 test('200 包裹的 1005 但仍有额度 → 瞬时短冷却继续用', async () => {
   await resetState();
   providerOk();
