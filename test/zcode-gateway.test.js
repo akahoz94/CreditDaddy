@@ -71,9 +71,11 @@ async function resetState() {
   upstreamQueue = [];
 }
 
-function fakeReq(method, body) {
+function fakeReq(method, body, remoteAddress = '127.0.0.1') {
   const req = new EventEmitter();
   req.method = method;
+  req.socket = { remoteAddress };
+  req.headers = {};
   let started = false;
   req.on('newListener', (ev) => {
     if (ev === 'data' && !started) {
@@ -198,4 +200,43 @@ test('GET 请求提示用法', async () => {
   const res = captureRes();
   await gw.handleGateway(fakeReq('GET', ''), res);
   assert.equal(res.status, 405);
+});
+
+
+test('局域网调用：未开局域网开关 → 403', async () => {
+  await resetState();
+  await store.saveSettings({ zcodeGateway: true, zcodeGatewayLan: false });
+  await seedAccount('a1', '账号一');
+  upstreamQueue.push(capCfg(), { status: 200, sse: true, body: sseBody() });
+  const res = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}', '192.168.31.5'), res);
+  assert.equal(res.status, 403);
+  assert.match(res.body, /局域网/);
+});
+
+test('局域网调用：key 不匹配 → 401；匹配 → 放行', async () => {
+  await resetState();
+  await store.saveSettings({ zcodeGateway: true, zcodeGatewayLan: true });
+  const tr = await import('../src/tenrouter.js');
+  tr.updateConfig({ endpoint: 'http://127.0.0.1:20127', key: 'sk-lan-test-key-123456' });
+  await seedAccount('a1', '账号一');
+  upstreamQueue.push(capCfg(), { status: 200, sse: true, body: sseBody() });
+
+  // 错误 key
+  const bad = captureRes();
+  const badReq = fakeReq('POST', '{}', '192.168.31.5');
+  badReq.headers = { 'x-api-key': 'sk-wrong' };
+  await gw.handleGateway(badReq, bad);
+  assert.equal(bad.status, 401);
+  assert.match(bad.body, /密钥不匹配/);
+
+  // 正确 key（= 10r 虚拟 key）
+  upstreamQueue.push(capCfg(), { status: 200, sse: true, body: sseBody() });
+  const good = captureRes();
+  const goodReq = fakeReq('POST', '{"model":"glm-5.3-flash"}', '192.168.31.5');
+  goodReq.headers = { 'x-api-key': 'sk-lan-test-key-123456' };
+  await gw.handleGateway(goodReq, good);
+  assert.equal(good.status, 200);
+  // 清理 tenrouter 配置，避免影响其他用例
+  tr.updateConfig({ endpoint: '' });
 });

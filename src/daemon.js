@@ -347,8 +347,11 @@ async function handleApi(req, res, url) {
   }
   if (p === '/api/zcode-gateway' && method === 'PUT') {
     const body = await readBody(req).catch(() => ({}));
-    await zcodeGateway.setGatewayEnabled(body?.enabled === true);
-    logger.info('DAEMON', `ZCode 免费额度网关：${body?.enabled === true ? '开' : '关'}`);
+    if (body?.enabled !== undefined) await zcodeGateway.setGatewayEnabled(body.enabled === true);
+    if (body?.lan !== undefined) {
+      await (await import('./store.js')).saveSettings({ zcodeGatewayLan: body.lan === true });
+      logger.info('DAEMON', `ZCode 网关局域网访问：${body.lan === true ? '开（重启后绑定 0.0.0.0）' : '关（仅本机）'}`);
+    }
     return json(res, 200, await zcodeGateway.gatewayStatus());
   }
   if (p === '/api/zcode/net' && method === 'GET') {

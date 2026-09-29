@@ -1266,8 +1266,10 @@ function renderStatus() {
       + ' <button class="btn" id="btn-zac" style="margin-left:6px" title="ZCode 活动资格每 2 分钟轮询，开启 1 小时后自动关闭">' + (ac ? '自动领取：开' : '自动领取：关') + '</button>'
       + ' <button class="btn" id="btn-znet" style="margin-left:4px" title="ZCode 上游接口的访问顺序：失败 / 被拦时自动回退另一条">出口：' + (pf ? '代理优先' : '直连优先') + '</button>'
       + ' <button class="btn" id="btn-zproxy" style="margin-left:4px" title="设置 ZCode 出口用的 http 代理（留空则清除；不设置时使用 HTTPS_PROXY 环境变量）">代理：' + esc(pu || (state.zHasEnvProxy ? '环境变量' : '未设置')) + '</button>'
-      + ' <button class="btn" id="btn-zgw" style="margin-left:4px" title="开启后本机 /gateway/v1/messages 提供 Start Plan（GLM-5.3-Flash 体验包）补全；10Router 建一个 anthropic-compatible 节点指向 http://127.0.0.1:' + location.port + '/gateway 即可调用。需要桌面版（隐藏窗口过验证码）">'
+      + ' <button class="btn" id="btn-zgw" style="margin-left:4px" title="开启后本机 /gateway/v1/messages 提供 Start Plan（GLM-5.3-Flash 体验包）补全；本机 10Router 建一个 anthropic-compatible 节点指向 http://127.0.0.1:' + location.port + '/gateway 即可调用。需要桌面版（隐藏窗口过验证码）">'
       + (state.zGateway === true ? '额度网关：开' : '额度网关：关') + '</button>'
+      + ' <button class="btn" id="btn-zgwlan" style="margin-left:4px" title="允许局域网其他设备的 10Router 直连本机网关（daemon 重启后生效）。远程调用需要用「10Router 连接设置」里保存的虚拟 key 鉴权，因此需先配置 10Router 连接并设置面板访问密码">'
+      + (state.zGatewayLan === true ? '局域网：开' : '局域网：关') + '</button>'
       + (state.zGateway === true ? ' <span class="chip on" style="margin-left:6px">10Router 已接入</span>' : '')
       + (state.zGateway === true ? ' <span class="ver" style="margin-left:6px">POST http://127.0.0.1:' + location.port + '/gateway/v1/messages</span>' : '')
       + (state.zGateway === true && state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' <span class="ver" style="margin-left:6px">最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · ' + state.zGatewayStats.calls + ' 次 · ' + esc(state.zGatewayStats.lastAccount || '-') + '</span>' : (state.zGateway === true ? ' <span class="ver" style="margin-left:6px">尚未有调用</span>' : ''))
@@ -1364,6 +1366,15 @@ $('notice').addEventListener('click', async (e) => {
     } catch (err) { toast(err.message, false); }
     return;
   }
+  if (e.target.closest('#btn-zgwlan')) {
+    try {
+      const r = await api('/api/zcode-gateway', { method: 'PUT', json: { lan: state.zGatewayLan !== true } });
+      state.zGatewayLan = r.lan === true;
+      renderStatus();
+      toast(r.lan ? '已允许局域网访问：重启 CreditDaddy 后生效（远程调用用 10Router 虚拟 key 鉴权）' : '已限制为本机访问');
+    } catch (err) { toast(err.message, false); }
+    return;
+  }
   if (e.target.closest('#btn-zgw')) {
     try {
       const r = await api('/api/zcode-gateway', { method: 'PUT', json: { enabled: state.zGateway !== true } });
@@ -1407,7 +1418,9 @@ async function loadZGateway() {
   try {
     const d = await api('/api/zcode-gateway');
     state.zGateway = d.enabled === true;
+    state.zGatewayLan = d.lan === true;
     state.zGatewayHasCaptcha = d.hasCaptcha === true;
+    state.zGatewayStats = d.stats || null;
     if (state.view === 'zcode') renderStatus();
   } catch (e) {}
 }

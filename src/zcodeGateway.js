@@ -18,6 +18,7 @@
 
 import { claimToken, zaiHeaders, fetchCaptchaConfig, fetchJsonRace } from './zcodeClient.js';
 import { getZcodeCaptchaProvider } from './zcodeAutoClaim.js';
+import { gatewayKey as tenrouterGatewayKey } from './tenrouter.js';
 
 // 整链补全提供者（桌面版注册）：隐藏窗口内「真 Chromium 求解验证码 + 同源发起补全」，
 // 规避 Node fetch 的 TLS 指纹风控。签名 ({ captchaCfg, jwt, rawBody }) → { status, contentType, body }。
@@ -116,6 +117,25 @@ const isAuthError = (status, text) => status === 401 || /令牌已过期|验证�
 const isExhausted = (status, text) =>
   status === 402 || /1113|余额不足|无可用资源包|insufficient/i.test(text);
 
+const LOOPBACK_RE = /^(::1|::ffff:127\.0\.0\.1|127\.0\.0\.1)$/;
+function isLoopbackRemote(remote) {
+  return !remote || LOOPBACK_RE.test(String(remote));
+}
+function bearerOf(authHeader) {
+  const v = String(authHeader || '');
+  return v.startsWith('Bearer ') ? v.slice(7) : '';
+}
+function fixedTimeEquals(a, b) {
+  const ab = Buffer.from(String(a), 'utf8');
+  const bb = Buffer.from(String(b), 'utf8');
+  if (ab.length !== bb.length) {
+    // 比较仍执行一次以保持恒定时间轮廓，然后返回 false
+    crypto.timingSafeEqual(ab, ab);
+    return false;
+  }
+  return crypto.timingSafeEqual(ab, bb);
+}
+
 /**
  * 网关数据面入口。返回 true 表示响应已写出（含失败结论）。
  */
@@ -133,6 +153,30 @@ export async function handleGateway(req, res) {
   if (!provider) {
     res.writeHead(503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: '本环境没有验证码提供者：网关补全需要桌面版 CreditDaddy（隐藏窗口静默过验证码）' }));
+  }
+
+  // 鉴权：本机回环免密；局域网/远程访问必须携带与设置一致的密钥
+  // （推荐直接复用 10r 的 LLM key：在 10r 面板复制，填进网关密钥与节点连接各一次）
+  const remote = (req.socket && req.socket.remoteAddress) || '';
+  if (!isLoopbackRemote(remote)) {
+    const settings = await loadSettings();
+    if (settings.zcodeGatewayLan !== true) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: '网关未允许局域网访问（面板 → ZCode → 局域网开关）' }));
+    }
+    // 访问密钥 = 10Router 连接设置里保存的虚拟 key（sk-…）——用户从有鉴权的
+    // 10Router 面板复制，同一把 key 也配在 10Router 的 zcode-free 连接里
+    const expected = tenrouterGatewayKey();
+    if (expected.length === 0) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: '网关已对局域网开放但未配置 10Router 虚拟 key（10Router 连接设置）' }));
+    }
+    const h = req.headers || {};
+    const given = String(h['x-api-key'] || bearerOf(h.authorization) || '').trim();
+    if (!given || !fixedTimeEquals(given, expected)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: '网关密钥不匹配' }));
+    }
   }
 
   let rawBody;
@@ -324,9 +368,13 @@ export async function gatewayStatus() {
   let withJwt = 0;
   for (const a of all) { try { claimToken(a); withJwt++; } catch { /* 无 plan JWT */ } }
   const now = Date.now();
+  const settings = await loadSettings();
+  const key = tenrouterGatewayKey();
   return {
     enabled,
     hasCaptcha,
+    lan: settings.zcodeGatewayLan === true,
+    hasKey: key.length > 0,
     stats: {
       lastCallAt: stats.lastCallAt,
       calls: stats.calls,

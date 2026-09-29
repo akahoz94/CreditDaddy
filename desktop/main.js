@@ -56,7 +56,10 @@ async function boot() {
     zgateway.setZcodeCompletionProvider(zcodePlanCompletion);
     const store = await load('src/store.js');
     const constants = await load('src/constants.js');
-    const r = await daemon.startDaemon(PORT, '127.0.0.1');
+    // 局域网网关：设置开启后绑定 0.0.0.0（面板访问密码开启时才建议，/gateway 数据面有自己的密钥）
+    const bootSettings = await store.loadSettings();
+    const bindHost = bootSettings.zcodeGatewayLan === true ? '0.0.0.0' : '127.0.0.1';
+    const r = await daemon.startDaemon(PORT, bindHost);
     boundPort = r.port;
     daemonMod = daemon;   // 保留模块引用：面板里改/关访问密码后，托盘领取实时读到新值（getPanelKey）
     daemonInfo = { version: constants.APP_VERSION, dataDir: store.dataDir(), homepage: constants.PROJECT_URL || DEFAULT_HOMEPAGE };

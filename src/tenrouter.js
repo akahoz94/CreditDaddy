@@ -67,6 +67,11 @@ export function normalizeEndpoint(raw) {
 const maskKey = (k) => (k ? (k.length > 12 ? k.slice(0, 5) + '…' + k.slice(-4) : '…') : '');
 export const isConfigured = (c = loadConfig()) => Boolean(c.endpoint && c.key);
 
+/** 网关鉴权用：本机存储的 10Router 虚拟 key（sk-…）。仅守护进程内部使用，永不回传面板。 */
+export function gatewayKey() {
+  return String(loadConfig().key || '').trim();
+}
+
 /** 面板用的配置视图（key 脱敏） */
 export async function publicConfig() {
   const c = loadConfig();
