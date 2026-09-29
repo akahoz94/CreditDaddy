@@ -172,7 +172,7 @@ function buildPlanRequest(rawBody, { token, userId }) {
   const headers = {
     'Content-Type': 'application/json',
     Accept: '*/*',
-    'accept-encoding': 'gzip',
+    'accept-encoding': 'identity', // 网关不做压缩透传——转发链上有字符串化环节，gzip 字节会损坏
     'User-Agent': `ZCode/${ver} ai-sdk/anthropic/3.0.81`,
     'X-ZCode-App-Version': ver,
     'X-ZCode-Agent': 'glm',
@@ -345,13 +345,12 @@ export async function handleGateway(req, res) {
       logger.info('ZCODE-GW', `${label} 补全成功（${upstream.status}）`);
       stats.lastAccount = label;
       cooling.delete(account.id);
-      // 透传 content-type + content-encoding（上游 gzip 原样转发，客户端自行解码）
+      // 注意：undici 已自动解压上游 gzip——body 是明文，绝不能再带 content-encoding 头
+      // （带着会让客户端对明文做 gunzip → 乱码）
       const out = {
         'Content-Type': upstream.headers.get('content-type') || 'application/json',
         'Cache-Control': 'no-cache',
       };
-      const enc = upstream.headers.get('content-encoding');
-      if (enc) out['Content-Encoding'] = enc;
       res.writeHead(upstream.status, out);
       try {
         const reader = upstream.body.getReader();
