@@ -305,6 +305,43 @@ export async function handleGateway(req, res) {
     }
 
     if (upstream.ok) {
+      // 上游会把业务错误包在 HTTP 200 + application/json 里（非 SSE）——先验形再转发，
+      // 否则客户端拿到「200 但不是 Message」的假成功（cc CLI 的 StreamNoEventsError 就是它）
+      const ct = (upstream.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('application/json')) {
+        const text = await upstream.text().catch(() => '');
+        let v;
+        try { v = JSON.parse(text); } catch { v = null; }
+        if (v && typeof v.code === 'number') {
+          if (isCaptchaError(200, text)) {
+            invalidateCaptcha();
+            attempted.push({ account: label, ok: false, error: '验证码被拒（200 业务码）', captcha: true });
+            try { captcha = await ensureCaptcha(true); } catch { captcha = null; }
+            continue;
+          }
+          if (isAuthError(200, text)) {
+            markDead(account.id);
+            attempted.push({ account: label, ok: false, error: 'JWT 已失效，账号拉黑' });
+            continue;
+          }
+          if (isExhausted(200, text)) {
+            markCooling(account.id, 30 * 60_000);
+            attempted.push({ account: label, ok: false, error: '额度不足/无资源包' });
+            continue;
+          }
+          logger.warn('ZCODE-GW', `${label} 上游 200 业务错误：${text.slice(0, 140)}`);
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(text);
+          return true;
+        }
+        // 真 Message（非流式）——原样转发
+        logger.info('ZCODE-GW', `${label} 补全成功（${upstream.status}）`);
+        stats.lastAccount = label;
+        cooling.delete(account.id);
+        res.writeHead(upstream.status, { 'Content-Type': ct || 'application/json', 'Cache-Control': 'no-cache' });
+        res.end(text);
+        return true;
+      }
       logger.info('ZCODE-GW', `${label} 补全成功（${upstream.status}）`);
       stats.lastAccount = label;
       cooling.delete(account.id);

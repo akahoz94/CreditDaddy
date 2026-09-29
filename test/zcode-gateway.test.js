@@ -172,6 +172,28 @@ test('3007 被拒 → 重解新 token 挂上重试，全败 502 汇总', async (
   assert.equal(new Set(params).size, params.length, '每次重试都应有新验证码 token');
 });
 
+test('200 包裹的业务错误：1005 跳过换号、未知码 502 透传', async () => {
+  await resetState();
+  providerOk();
+  await seedAccount('busy', '占用号');
+  await seedAccount('weird', '怪码号');
+  await seedAccount('good', '好号');
+  upstreamQueue.push(
+    { status: 200, body: '{"code":1005,"msg":"exceed quota limit"}' },
+    { status: 200, body: '{"code":4242,"msg":"未知业务错误"}' },
+  );
+  const res = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}'), res);
+  // 1005 → 跳过换号；未知业务码 → 即时 502 透传（不盲目烧完账号池）
+  assert.equal(res.status, 502, res.body);
+  assert.match(res.body, /未知业务错误/);
+  const rows = completions();
+  assert.match(rows[0].headers.Authorization, /^Bearer jwt-busy-/);
+  assert.match(rows[1].headers.Authorization, /^Bearer jwt-weird-/);
+  const st = await gw.gatewayStatus();
+  assert.ok(st.cooling.includes('占用号'));
+});
+
 test('401 拉黑 / 额度与 429 跳过 / 最终成功', async () => {
   await resetState();
   providerOk();
