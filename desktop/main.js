@@ -51,6 +51,9 @@ async function boot() {
     const zauto = await load('src/zcodeAutoClaim.js');
     // ZCode 自动领取的验证码实现：隐藏窗口跑阿里云验证码 SDK（静默优先，风控时弹出让人工完成）
     zauto.setZcodeCaptchaProvider(zcodeCaptchaVerify);
+    // ZCode 免费额度网关的整链补全：隐藏窗口真 Chromium 求解 + 同源发起补全
+    const zgateway = await load('src/zcodeGateway.js');
+    zgateway.setZcodeCompletionProvider(zcodePlanCompletion);
     const store = await load('src/store.js');
     const constants = await load('src/constants.js');
     const r = await daemon.startDaemon(PORT, '127.0.0.1');
@@ -115,6 +118,88 @@ window.initAliyunCaptcha({
     });
     capWin.on('closed', () => fail('验证码未完成'));
     capWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  });
+}
+
+/**
+ * ZCode 免费额度网关的整链补全提供者：隐藏窗口先加载 zcode.z.ai 本站（真 Chromium
+ * TLS/cookie/来源），页内跑阿里云验证码 SDK 拿 token，再在【同一页面上下文】里发起
+ * plan 端点补全 fetch —— 同源、同会话、同网络栈，规避 Node fetch 的 TLS 指纹风控。
+ * 返回 { status, contentType, body }；window 结束后 devtools 无残留。
+ */
+function zcodePlanCompletion({ captchaCfg, jwt, rawBody, headers = {} }) {
+  return new Promise((resolve, reject) => {
+    let capWin = null;
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; if (capWin && !capWin.isDestroyed()) capWin.destroy(); reject(new Error('网关补全超时（120s）')); } }, 120000);
+    const done = (fn, arg) => { if (!settled) { settled = true; clearTimeout(timer); if (capWin && !capWin.isDestroyed()) capWin.destroy(); fn(arg); } };
+
+    const jsonSafe = (o) => JSON.stringify(o).replace(/</g, '<');
+    capWin = new BrowserWindow({
+      show: false, width: 460, height: 600, title: 'ZCode 额度网关（后台验证）',
+      icon: iconPath(), autoHideMenuBar: true,
+      webPreferences: { session: session.fromPartition('zcap-' + crypto.randomUUID()), contextIsolation: true, sandbox: true },
+    });
+    capWin.webContents.on('console-message', (e, level, message) => {
+      const msg = typeof message === 'string' ? message : (e && e.message) || '';
+      if (msg.startsWith('ZGW:RESP:')) {
+        try { done(resolve, JSON.parse(msg.slice(9))); } catch { done(reject, new Error('网关响应解析失败')); }
+      } else if (msg.startsWith('ZGW:ERR:')) {
+        done(reject, new Error(msg.slice(8)));
+      } else if (msg === 'ZCAP:INTERACTIVE') {
+        if (capWin && !capWin.isDestroyed() && !capWin.isVisible()) capWin.show();
+      }
+    });
+    capWin.on('closed', () => done(reject, new Error('网关窗口提前关闭')));
+
+    // 先落本站拿真实来源与 cookie，再在页内跑验证码 + 同源补全
+    if (headers['User-Agent']) capWin.webContents.setUserAgent(headers['User-Agent']);
+    capWin.webContents.loadURL('https://zcode.z.ai/').then(() => {
+      const pageJs = `(async () => {
+        try {
+          await new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = 'https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js';
+            s.onload = res; s.onerror = () => rej(new Error('captcha script load failed'));
+            document.head.appendChild(s);
+          });
+          const cfg = ${jsonSafe(captchaCfg)};
+          const holder = document.createElement('div'); holder.id = 'cap'; document.body.appendChild(holder);
+          const btn = document.createElement('button'); btn.id = 'btn'; btn.hidden = true; document.body.appendChild(btn);
+          const param = await new Promise((res2, rej2) => {
+            let inst = null;
+            window.initAliyunCaptcha({
+              SceneId: cfg.sceneId, prefix: cfg.prefix, mode: 'popup', language: 'zh-CN', showErrorTip: false,
+              element: '#cap', button: '#btn', region: cfg.region,
+              getInstance: (i) => { inst = i; if (i && typeof i.startTracelessVerification === 'function') i.startTracelessVerification(); },
+              success: (p) => res2(typeof p === 'string' ? p : (p && p.captchaVerifyParam) || ''),
+              captchaVerifyCallback: (p) => { res2(p); return { captchaResult: true }; },
+              fail: () => rej2(new Error('captcha fail')),
+              onError: () => rej2(new Error('captcha error')),
+            });
+            setTimeout(() => { try { if (inst && typeof inst.startTracelessVerification === 'function') inst.startTracelessVerification(); } catch {} }, 500);
+          });
+          const extra = ${jsonSafe(headers)};
+          delete extra['User-Agent'];
+          const resp = await fetch('https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages', {
+            method: 'POST',
+            headers: {
+              ...extra,
+              'Content-Type': 'application/json',
+              'X-Aliyun-Captcha-Verify-Param': param,
+              'X-Aliyun-Captcha-Verify-Region': cfg.region || '',
+              'Authorization': 'Bearer ' + ${jsonSafe(jwt)},
+            },
+            body: ${jsonSafe(rawBody)},
+          });
+          const text = await resp.text();
+          console.log('ZGW:RESP:' + JSON.stringify({ status: resp.status, contentType: resp.headers.get('content-type') || 'application/json', body: text }));
+        } catch (e) {
+          console.log('ZGW:ERR:' + (e && e.message || String(e)));
+        }
+      })()`;
+      capWin.webContents.executeJavaScript(pageJs).catch((err) => done(reject, new Error('页内脚本执行失败：' + err.message)));
+    }).catch((err) => done(reject, new Error('zcode.z.ai 打开失败：' + err.message)));
   });
 }
 

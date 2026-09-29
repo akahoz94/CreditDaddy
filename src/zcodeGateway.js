@@ -18,7 +18,14 @@
 
 import { claimToken, zaiHeaders, fetchCaptchaConfig, fetchJsonRace } from './zcodeClient.js';
 import { getZcodeCaptchaProvider } from './zcodeAutoClaim.js';
+
+// 整链补全提供者（桌面版注册）：隐藏窗口内「真 Chromium 求解验证码 + 同源发起补全」，
+// 规避 Node fetch 的 TLS 指纹风控。签名 ({ captchaCfg, jwt, rawBody }) → { status, contentType, body }。
+let completionProvider = null;
+export function setZcodeCompletionProvider(fn) { completionProvider = typeof fn === 'function' ? fn : null; }
+export function getZcodeCompletionProvider() { return completionProvider; }
 import { loadAccounts, loadSettings, saveSettings } from './store.js';
+import crypto from 'node:crypto';
 import { logger } from './logger.js';
 
 const PLAN_MESSAGES_URL = 'https://zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages';
@@ -118,7 +125,8 @@ export async function handleGateway(req, res) {
     res.writeHead(503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'ZCode 免费额度网关未开启（面板 → ZCode → 网关开关）' }));
   }
-  const provider = getZcodeCaptchaProvider();
+  const completionProvider = getZcodeCompletionProvider();
+  const provider = completionProvider || getZcodeCaptchaProvider();
   if (!provider) {
     res.writeHead(503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: '本环境没有验证码提供者：网关补全需要桌面版 CreditDaddy（隐藏窗口静默过验证码）' }));
@@ -157,13 +165,72 @@ export async function handleGateway(req, res) {
       continue;
     }
 
+    // 整链委托：真 Chromium 页内「求解 + 同源补全」一条龙（优先）
+    if (completionProvider) {
+      const cfg = await fetchCaptchaConfig().catch(() => null);
+      if (!cfg || !cfg.enabled) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: '验证码配置不可用' }));
+      }
+      let token;
+      try { token = claimToken(account); } catch (e) {
+        attempted.push({ account: label, ok: false, error: e.message });
+        markDead(account.id);
+        continue;
+      }
+      // 客户端身份面：ZCode/{ver} + SDK UA 后缀 + 全套 X-ZCode/X-Client 头 + 会话追踪
+      const identity = await zaiHeaders(token, account.meta?.deviceMid);
+      identity['User-Agent'] = `${identity['User-Agent']} ai-sdk/anthropic/3.0.81`;
+      identity['anthropic-version'] = '2023-06-01';
+      identity['accept-encoding'] = 'gzip';
+      identity['x-zcode-session-type'] = 'main';
+      identity['x-zcode-trace-id'] = crypto.randomUUID();
+      identity['X-Aliyun-Captcha-Verify-Region'] = cfg.region || '';
+      let r;
+      try {
+        r = await completionProvider({ captchaCfg: cfg, jwt: token, rawBody, headers: identity });
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        attempted.push({ account: label, ok: false, error: e.message });
+        continue;
+      }
+      if (r.status >= 400 && isCaptchaError(r.status, r.body)) {
+        attempted.push({ account: label, ok: false, error: `验证码被拒（${r.status}）`, captcha: true });
+        logger.warn('ZCODE-GW', `${label} 页内整链被拒（${r.status}），重试`);
+        continue;
+      }
+      if (r.status >= 400 && isAuthError(r.status, r.body)) {
+        markDead(account.id);
+        attempted.push({ account: label, ok: false, error: 'JWT 已失效，账号拉黑' });
+        continue;
+      }
+      if (r.status >= 400 && (isExhausted(r.status, r.body) || r.status === 429)) {
+        markCooling(account.id);
+        attempted.push({ account: label, ok: false, error: r.status === 429 ? '429 冷却' : '额度不足' });
+        continue;
+      }
+      logger.info('ZCODE-GW', `${label} 页内整链补全成功（${r.status}）`);
+      cooling.delete(account.id);
+      res.writeHead(r.status, { 'Content-Type': r.contentType || 'application/json', 'Cache-Control': 'no-cache' });
+      res.end(r.body);
+      return true;
+    }
+
     let upstream;
     const controller = new AbortController();
     req.on('close', () => controller.abort());
     try {
+      // 请求面完全镜像 ZCode 客户端的 anthropic 形态：identity 头之外，
+      // plan 端点还要求 SDK UA 后缀 / anthropic-version / 会话追踪头，缺了会被风控 405/3012
+      const identity = await zaiHeaders(token, account.meta?.deviceMid);
       const headers = {
-        ...(await zaiHeaders(token, account.meta?.deviceMid)),
+        ...identity,
         'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'accept-encoding': 'gzip',
+        'User-Agent': `${identity['User-Agent']} ai-sdk/anthropic/3.0.81`,
+        'x-zcode-session-type': 'main',
+        'x-zcode-trace-id': crypto.randomUUID(),
         'X-Aliyun-Captcha-Verify-Param': captcha.param,
         'X-Aliyun-Captcha-Verify-Region': captcha.region,
       };
