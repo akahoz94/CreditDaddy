@@ -126,6 +126,8 @@
   .pill.fail { color: var(--err); border-color: var(--err-soft); }
   .pill.cur { color: #0f766e; border-color: rgba(20,184,166,.5); }
   html[data-theme="dark"] .pill.cur { color: #5eead4; }
+  .pill.gw { color: #4338ca; border-color: rgba(99,102,241,.45); }
+  html[data-theme="dark"] .pill.gw { color: #a5b4fc; }
   .ops { display: flex; gap: 6px; flex-shrink: 0; }
 
   .meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 12px; }
@@ -985,6 +987,7 @@ function cardHtml(a) {
     + '<span class="name" data-act="rename" title="点击修改备注名">' + esc(a.name || '(未命名)') + '</span>'
     + provBadges(a.provider, true, a.flavor)
     + (isCurrent ? '<span class="pill cur" title="' + esc(CLIENT_LABEL[a.product] || '') + ' 客户端当前登录的账号">客户端当前</span>' : '')
+    + (a.product === 'zcode' && isGatewayCurrent(a) ? '<span class="pill gw" title="体验包接口最近一次补全用的账号（多账号时按轮换自动选择，与客户端登录无关）">接口使用中</span>' : '')
     + (a.isPat ? '<span class="badge">PAT</span>' : '')
     + (a.verified === false ? '<span class="pill fail">token 无效</span>' : '')
     + (st.text ? '<span class="pill ' + st.cls + '" title="' + esc(a.lastResult ? fmtTime(a.lastResult.at) + ' ' + (a.lastResult.message || a.lastResult.status) : '') + '">' + esc(st.text) + '</span>' : '')
@@ -1009,6 +1012,12 @@ function cardHtml(a) {
 const isDone = (a) => Boolean(state.status && state.status.todayDone && state.status.todayDone[a.id] === state.status.today);
 const ofProduct = (prod) => state.accounts.filter((a) => a.product === prod);
 const currentUidOf = (prod) => state.status && (prod === 'workbuddy' ? state.status.workbuddyCurrentUid : prod === 'zcode' ? state.status.zcodeCurrentUid : prod === 'catpaw' ? state.status.catpawCurrentUid : null);
+/** 接口使用中判定：体验包接口最近一次补全用的账号（lastAccount 记的是 name || uid || id） */
+function isGatewayCurrent(a) {
+  const last = state.zGatewayStats && state.zGatewayStats.lastAccount;
+  return Boolean(last) && (a.name === last || a.uid === last || a.id === last);
+}
+
 // 客户端当前登录判定：WorkBuddy / mirasim / 妙手 按 uid；ZCode 按 uid 或 email（早期导入的账号可能只存了其中一个）
 function isClientCurrent(a) {
   const s = state.status;
@@ -1266,11 +1275,11 @@ function renderStatus() {
       + ' <button class="btn" id="btn-zac" style="margin-left:6px" title="ZCode 活动资格每 2 分钟轮询，开启 1 小时后自动关闭">' + (ac ? '自动领取：开' : '自动领取：关') + '</button>'
       + ' <button class="btn" id="btn-znet" style="margin-left:4px" title="ZCode 上游接口的访问顺序：失败 / 被拦时自动回退另一条">出口：' + (pf ? '代理优先' : '直连优先') + '</button>'
       + ' <button class="btn" id="btn-zproxy" style="margin-left:4px" title="设置 ZCode 出口用的 http 代理（留空则清除；不设置时使用 HTTPS_PROXY 环境变量）">代理：' + esc(pu || (state.zHasEnvProxy ? '环境变量' : '未设置')) + '</button>'
-      + ' <button class="btn" id="btn-zgw" style="margin-left:4px" title="开启后本机 /gateway/v1/messages 提供 Start Plan（GLM-5.3-Flash 体验包）补全；本机 10Router 建一个 anthropic-compatible 节点指向 http://127.0.0.1:' + location.port + '/gateway 即可调用。需要桌面版（隐藏窗口过验证码）">'
-      + (state.zGateway === true ? '额度网关：开' : '额度网关：关') + '</button>'
-      + ' <button class="btn" id="btn-zgwlan" style="margin-left:4px" title="允许局域网其他设备的 10Router 直连本机网关（daemon 重启后生效）。远程调用需要用「10Router 连接设置」里保存的虚拟 key 鉴权，因此需先配置 10Router 连接并设置面板访问密码">'
+      + ' <button class="btn" id="btn-zgw" style="margin-left:4px" title="开启后，领到的体验包额度会变成本机的一个补全接口（/gateway/v1/messages）；10Router 建一个 anthropic-compatible 节点指向 http://127.0.0.1:' + location.port + '/gateway 即可调用。需要桌面版（隐藏窗口过验证码）">'
+      + (state.zGateway === true ? '体验包接口：开' : '体验包接口：关') + '</button>'
+      + ' <button class="btn" id="btn-zgwlan" style="margin-left:4px" title="允许局域网其他设备的 10Router 直连本机的体验包接口（daemon 重启后生效）。远程调用需要用「10Router 连接设置」里保存的虚拟 key 鉴权，因此需先配置 10Router 连接并设置面板访问密码">'
       + (state.zGatewayLan === true ? '局域网：开' : '局域网：关') + '</button>'
-      + (state.zGateway === true && state.zGatewayStats && state.zGatewayStats.lastAccount ? ' <span class="chip on" style="margin-left:6px" title="额度网关有调用记录，10Router 正在使用本机网关">10Router 已接入 · 当前轮换 ' + esc(state.zGatewayStats.lastAccount) + '</span>' : '')
+      + (state.zGateway === true && state.zGatewayStats && state.zGatewayStats.lastAccount ? ' <span class="chip on" style="margin-left:6px" title="体验包接口有调用记录，10Router 正在调用本机接口（最近用的账号见账号卡片上的「接口使用中」标记）">10Router 已接入</span>' : '')
       + (state.zGateway === true ? ' <span class="ver" style="margin-left:6px">POST http://127.0.0.1:' + location.port + '/gateway/v1/messages</span>' : '')
       + (state.zGateway === true && state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' <span class="ver" style="margin-left:6px">最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · 共 ' + state.zGatewayStats.calls + ' 次</span>' : (state.zGateway === true ? ' <span class="ver" style="margin-left:6px">尚未有调用</span>' : ''))
       + zcodeClientChip(s);
@@ -1380,7 +1389,7 @@ $('notice').addEventListener('click', async (e) => {
       const r = await api('/api/zcode-gateway', { method: 'PUT', json: { enabled: state.zGateway !== true } });
       state.zGateway = r.enabled === true;
       renderStatus();
-      toast('ZCode 额度网关：' + (r.enabled ? '已开启（10Router 建 anthropic-compatible 节点指向本机 /gateway/v1/messages）' : '已关闭'));
+      toast('ZCode 体验包接口：' + (r.enabled ? '已开启（10Router 建 anthropic-compatible 节点指向本机 /gateway/v1/messages）' : '已关闭'));
     } catch (err) { toast(err.message, false); }
     return;
   }
@@ -1702,7 +1711,7 @@ function renderTenrouter() {
   const c = tr.config;
   if (!c) { box.innerHTML = '<div class="empty">加载中…</div>'; return; }
   const gwLine = state.zGateway === true
-    ? '<div class="empty" style="margin-bottom:10px">ZCode 额度网关：<b>运行中</b>' + (state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' · 最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · ' + state.zGatewayStats.calls + ' 次 · 最后用号 ' + esc(state.zGatewayStats.lastAccount || '-') : '（尚未有调用）') + ' — 体验包模型 <code>zcode-free/glm-5.3-flash</code></div>'
+    ? '<div class="empty" style="margin-bottom:10px">ZCode 体验包接口：<b>运行中</b>' + (state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' · 最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · ' + state.zGatewayStats.calls + ' 次 · 最后用号 ' + esc(state.zGatewayStats.lastAccount || '-') : '（尚未有调用）') + ' — 体验包模型 <code>zcode-free/glm-5.3-flash</code></div>'
     : '';
   if (!c.configured) { box.innerHTML = gwLine + trSetupHtml(); return; }
   const list = (tr.quotas && tr.quotas.connections) || [];
@@ -2801,7 +2810,7 @@ applyView();
     });
     loadLogs();
     setInterval(loadLogs, 10000);
-    setInterval(async () => { await loadStatus(); render(); }, 30000);
+    setInterval(async () => { await loadStatus(); await loadZGateway(); render(); }, 30000);
   }
   // 先直接请求（本机模式无需密码）；需要密码时 api() 会弹框并重试
   api('/api/status').then(start).catch((e) => toast(e.code === 'PANEL_KEY'
