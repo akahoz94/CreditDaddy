@@ -323,6 +323,7 @@ async function handleApi(req, res, url) {
         region: typeof body.region === 'string' ? body.region : '',
       });
       logger.info('DAEMON', `ZCode ${account.name || account.id} 领取成功：${outcome.planName}`);
+      await zcodeGateway.clearQuotaMark(account.id);
       await withAccounts((list) => {
         const cur = list.find((a) => a.id === account.id);
         if (cur) cur.lastResult = { status: 'checked-in', message: `已领取：${outcome.planName}`, amount: 0, at: new Date().toISOString() };

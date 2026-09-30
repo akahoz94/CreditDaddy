@@ -8,6 +8,7 @@ import { productOf } from './constants.js';
 import { startUsageSyncScheduler } from './tenrouter.js';
 import { refreshContext } from './accounts.js';
 import { zcodeAutoClaim } from './zcodeAutoClaim.js';
+import { clearQuotaMark } from './zcodeGateway.js';
 import {
   autoClaimEnabled, autoClaimUntil, enableAutoClaimFor, setAutoClaimEnabled,
   warmZcodeAppVersion,
@@ -133,6 +134,7 @@ function runZcodeTick(accountIds, { force = false } = {}) {
     if (!force && !autoClaimEnabled()) return { results: [], summary: 'ZCode 自动领取已关闭' };
     zcodeTicking = true;
     const results = [];
+    const claimedIds = [];
     try {
       const accounts = (await loadAccounts()).filter((a) => a.provider === 'zcode'
         && (!accountIds || accountIds.has(a.id)));
@@ -142,6 +144,10 @@ function runZcodeTick(accountIds, { force = false } = {}) {
         try {
           const outcome = await zcodeAutoClaim(account);
           if (!outcome) continue;
+          if (outcome.status === 'checked-in') {
+            claimedIds.push(account.id);
+            await clearQuotaMark(account.id);
+          }
           results.push({ accountId: account.id, account: label, provider: 'zcode', status: outcome.status, message: outcome.message });
           const lastResult = { status: outcome.status, message: outcome.message, amount: 0, at: new Date().toISOString() };
           await withAccounts((list) => {
@@ -155,6 +161,7 @@ function runZcodeTick(accountIds, { force = false } = {}) {
       zcodeLastTick = {
         at: new Date().toISOString(),
         summary: `ZCode 资格轮询完成：${results.length} 个账号返回活动结果`,
+        claimedIds, // 面板据此即时刷新这些账号的额度
       };
       return { results, summary: zcodeLastTick.summary };
     } finally {

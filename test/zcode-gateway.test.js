@@ -320,3 +320,22 @@ test('GET 请求提示用法', async () => {
   await gw.handleGateway(fakeReq('GET', ''), res);
   assert.equal(res.status, 405);
 });
+
+test('领取成功后 clearQuotaMark：耗尽打标立即清除、账号回到轮换', async () => {
+  await resetState();
+  await seedAccount('refill', '补额度号');
+  const state = JSON.parse(fs.readFileSync(path.join(MHOME, 'state.json'), 'utf8'));
+  state.zcodeGatewayExhausted = { refill: { remaining: 0, at: Date.now() } };
+  fs.writeFileSync(path.join(MHOME, 'state.json'), JSON.stringify(state));
+  const before = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}'), before);
+  assert.equal(before.status, 503, '打标中不应轮换');
+
+  await gw.clearQuotaMark('refill');
+  const persisted = JSON.parse(fs.readFileSync(path.join(MHOME, 'state.json'), 'utf8'));
+  assert.ok(!persisted.zcodeGatewayExhausted?.refill, '持久化打标应一并清除');
+  upstreamQueue.push({ status: 200, sse: true, body: sseBody() });
+  const after = captureRes();
+  await gw.handleGateway(fakeReq('POST', '{}'), after);
+  assert.equal(after.status, 200, after.body);
+});

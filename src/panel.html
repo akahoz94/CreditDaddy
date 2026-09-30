@@ -1903,6 +1903,20 @@ $('tr-disconnect').onclick = trDisconnect;
 // ── 数据加载 ──
 async function loadStatus() {
   try { state.status = await api('/api/status'); renderStatus(); } catch (e) {}
+  syncAfterZcodeClaims();
+}
+// 后台自动领取成功后，立即刷新这些账号的额度与卡片（不必等 2 分钟一轮的余额刷新）
+let seenZcodeTickAt = null;
+async function syncAfterZcodeClaims() {
+  const z = state.status && state.status.scheduler && state.status.scheduler.zcode;
+  const t = z && z.lastTick;
+  if (!t || t.at === seenZcodeTickAt) return;
+  const first = seenZcodeTickAt === null;
+  seenZcodeTickAt = t.at;
+  if (first || !(t.claimedIds && t.claimedIds.length)) return;   // 首次加载已全量拉取
+  try { state.accounts = (await api('/api/accounts')).accounts; } catch (e) {}
+  loadQuotas(t.claimedIds);
+  loadZGateway();
 }
 async function loadAccounts() {
   const data = await api('/api/accounts');

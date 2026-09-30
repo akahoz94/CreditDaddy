@@ -152,6 +152,23 @@ async function persistMark(accountId, entry) {
   } catch { /* 持久化失败不影响内存态 */ }
 }
 
+/**
+ * 账号刚领到新额度（活动领取成功）：清掉耗尽打标（内存 + state.json）和额度不足导致的冷却，
+ * 让它立刻回到轮换——否则要等打标 10 分钟 / 冷却 30 分钟到期。JWT 拉黑不受影响。
+ */
+export async function clearQuotaMark(accountId) {
+  quotaCache.delete(accountId);
+  if (!dead.has(accountId)) cooling.delete(accountId);
+  try {
+    const st = await loadState();
+    const saved = st?.zcodeGatewayExhausted;
+    if (saved && saved[accountId]) {
+      delete saved[accountId];
+      await saveState({ ...st, zcodeGatewayExhausted: saved });
+    }
+  } catch { /* 持久化失败不影响内存态 */ }
+}
+
 function isQuotaExhausted(id) {
   const q = quotaCache.get(id);
   return Boolean(q && Date.now() - q.at < QUOTA_TTL_MS && q.remaining <= 0);
