@@ -4,6 +4,17 @@
 
 ---
 
+## [1.1.0]
+
+### ✨ 新功能
+
+- **接入 Trae（字节 TRAE SOLO / Trae CN）作为第 6 条产品线**：本机导入 + 额度查询 + 每日签到领积分。登录凭据直接解本机 Trae 客户端 `<userData>/User/globalStorage/storage.json` 里的 `iCubeAuthInfo://icube.cloudide`（Trae 自研「tc」信封：pepper 为随安装包分发的公开常量表，SHA512 两轮派生 + AES-128-CBC + SHA512 完整性前缀），纯 `node:crypto` 实现，**不引入任何依赖、不需要 SQLite**，token 不出本机。额度取 `ide_user_ent_usage`（服务端 `usage_summary` 优先，逐包明细按名称归并——每天签到会新发一个 150 分 / 7 天有效期的独立资源包，账户上可累积数十个同名包，逐包直出会淹掉产品卡）；签到走 `checkin_credits/status` + `/claim`，已签不重复领。
+- 风控口径：`x-device-id` 必须为纯数字设备号（传 GUID 触发 `code 9074`），优先直接取 `storage.json` 里 `iCubeAuthInfo://icube-dc:<数字>` 的键名后缀以保持与 IDE 自身指纹一致，缺失时按 uid 确定性派生；`x-market-user-id` / `vscode-sessionid` 同样按 uid 派生，保证同一账号请求指纹恒定。
+- 有意**不做自动续期**：Trae 的 refresh 会轮转 refreshToken 并作废 IDE 自己那份，等于把用户正在使用的客户端踢下线。因此不导入 refreshToken，面板改为显示凭据到期日并在 48 小时内变红，提示到 Trae 里重新登录后重新导入。
+- 多账号当前用法：在 Trae 里登录某个账号 → 导入 → 换下一个账号登录 → 再导入。一键切换 IDE 登录态（`switchTo`）本版未实现。
+
+---
+
 ## [Unreleased]
 
 ### 🐛 修复
@@ -33,7 +44,7 @@
 ### ✨ 新功能
 
 - 领取成功后清除接口的额度耗尽标记（原先要等打标 10 分钟 / 冷却 30 分钟才回轮换），面板约 30 秒内即时刷新对应账号额度
-- 用量同步新增「10Router 本机」来源（移植 10router-sync 插件 `--source 10r`）：本机 10Router 实例自己记的账（含 zcode-free 经其中转的行）同步到聚合端；同实例防护、gatewaySync 标记、无时间戳行跳过；来源版本 2→3，已有配置自动并入
+- 用量同步新增「10Router 本机」来源（移植 10router-sync 插件 `--source 10r`）：本机 10Router 实例自己记的账（含 zcode-free 经其中转的行）同步到聚合端；同实例防护、gatewaySync 标记、无时间戳行跳过；来源版本 2→3，已有配置自动并入
 - 桌面端自动更新（Windows 安装版）：启动 30 秒后与每 6 小时静默检查 GitHub Releases，后台下载、退出时自动安装；托盘菜单可手动检查、一键重启更新。Portable / macOS（未签名）继续手动下载
 
 ### 💄 界面
