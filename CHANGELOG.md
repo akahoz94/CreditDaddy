@@ -63,7 +63,9 @@
 
 ---
 
-## [Unreleased]
+## [上游 1.1.0] (2026-10-01)
+
+> 本节是上游 techysy v1.1.0（`0a99f09`）的内容，随本次合并带入 fork（原 fork 的 [Unreleased] 就是它）。上面的 [1.1.0] 是 fork 自己的 Trae 接入版，两条版本号线在 1.1.0 上重名；package.json 保留 fork 更高的 1.3.1，否则桌面版的自动更新会把自己的构建判成旧版。
 
 ### 🐛 修复
 
@@ -83,6 +85,7 @@
 
 ### 🐛 修复
 
+- 桌面版「检查更新」报错修复：v1.0.0 的 release 资产里没有 latest.yml（自动更新功能晚于 v1.0.0 打包才上线），electron-updater 按最新 release 找元数据必 404。electron-updater 失败时改为直查 GitHub Releases API 的兜底通道（zcode/qoder 式更新：比版本号 → 下载 CreditDaddy-Setup-*.exe、按 SHA256SUMS-desktop.txt 校验 → 运行安装程序），托盘菜单与后台静默检查同步接入；后续 release 即使再漏传 latest.yml 也不会断更新。发布 v1.0.1 后，线上 v1.0.0 安装版即可恢复正常自更新
 - **#7** 保存 10Router 设置时带上面板密码（原先只在点「同步账号」时发送，保存后密码丢失，同步退回 apikey 通道被 10Router 拦 401；10Router 侧守卫问题见 techysy/10router#38）
 - **#5** mirasim 本机导入支持新版密钥 `%APPDATA%\@mirasim\desktop\secret-key.enc`（Electron safeStorage v10）；读不到密钥时明确列出检查过的位置，「解密失败」与「未登录」分开提示；CLI `scan` 打印跳过原因
 - **#6** WorkBuddy 国际版浏览器登录改走 `www.workbuddy.ai`（原 `www.codebuddy.ai` 是 CodeBuddy 国际站）；token 识别补 `workbuddy.cc`

@@ -6,9 +6,11 @@
  *   - 开机自启以 --hidden 启动：只驻留托盘，不弹窗口
  *   - 打包后从 resources/creditdaddy 加载服务端；开发时（electron desktop/）直接用仓库源码
  */
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, Notification, dialog, ipcMain, session, safeStorage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, Notification, dialog, ipcMain, session, safeStorage, net } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
 const crypto = require('node:crypto');
+const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { createPasswordStore } = require('./passwordStore');
 
@@ -28,7 +30,9 @@ let hideHintShown = false;
 let lastSummary = '';
 const DEFAULT_HOMEPAGE = 'https://github.com/techysy/CreditDaddy';
 let daemonInfo = { version: app.getVersion(), dataDir: '', homepage: DEFAULT_HOMEPAGE };
-let updateState = { available: null, downloaded: null };   // available/downloaded: 版本号字符串
+let updateState = { available: null, downloaded: null, fallback: null };
+// available/downloaded: electron-updater 发现/已下载的版本号；fallback: { version, asset, installerPath? }
+// GitHub API 直查到的新版本（release 缺 latest.yml 导致 electron-updater 404 时的兜底通道）
 
 const serverRoot = app.isPackaged
   ? path.join(process.resourcesPath, 'creditdaddy')
@@ -83,37 +87,222 @@ async function boot() {
 /**
  * 自动更新：启动 30 秒后和每 6 小时查一次 GitHub Releases，后台静默下载，
  * 退出时自动安装（autoInstallOnAppQuit）；托盘菜单可手动检查 / 立即重启更新。
+ * 主通道是 electron-updater（依赖 release 资产里的 latest.yml，v1.0.0 起的 release 忘传就会 404），
+ * 失败时转 GitHub API 直查兜底（fetchLatestReleaseFromGitHub）。
  * Portable 版和开发模式没有自更新能力，直接跳过。
  */
 function setupAutoUpdate() {
-  if (!autoUpdater || !app.isPackaged) return;
+  if (!app.isPackaged) return;
   if (process.platform !== 'win32') return;          // macOS 构建未签名，Squirrel 装不上，先只做 Win 自更新
   if (process.env.PORTABLE_EXECUTABLE_DIR) return;   // portable 解压自包含，覆盖式更新会丢用户数据
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-available', (info) => { updateState.available = info.version; refreshTrayMenu(); });
-  autoUpdater.on('update-not-available', () => { updateState.available = null; refreshTrayMenu(); });
-  autoUpdater.on('update-downloaded', (info) => {
-    updateState.downloaded = info.version;
-    refreshTrayMenu();
-    try {
-      const n = new Notification({
-        title: 'CreditDaddy 新版本已就绪',
-        body: `v${info.version} 已在后台下载完成，退出 CreditDaddy 时自动安装（也可在托盘菜单里立即重启更新）。`,
-        silent: true,
-      });
-      n.on('click', () => showWin());
-      n.show();
-    } catch {}
-  });
-  autoUpdater.on('error', () => {});   // 更新失败不影响主流程，托盘手动检查时会给出具体报错
-  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  if (autoUpdater) {
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('update-available', (info) => { updateState.available = info.version; refreshTrayMenu(); });
+    autoUpdater.on('update-not-available', () => { updateState.available = null; refreshTrayMenu(); });
+    autoUpdater.on('update-downloaded', (info) => {
+      updateState.downloaded = info.version;
+      refreshTrayMenu();
+      try {
+        const n = new Notification({
+          title: 'CreditDaddy 新版本已就绪',
+          body: `v${info.version} 已在后台下载完成，退出 CreditDaddy 时自动安装（也可在托盘菜单里立即重启更新）。`,
+          silent: true,
+        });
+        n.on('click', () => showWin());
+        n.show();
+      } catch {}
+    });
+    autoUpdater.on('error', () => {});   // 更新失败不影响主流程，托盘手动检查时会给出具体报错
+  }
+  const check = () => {
+    const p = autoUpdater
+      ? autoUpdater.checkForUpdates().catch(() => checkFallbackSilently())
+      : checkFallbackSilently();
+    p.catch(() => {});
+  };
   setTimeout(check, 30_000).unref?.();
   setInterval(check, 6 * 60 * 60 * 1000).unref?.();
 }
 
+/** 版本号比较：x.y.z 逐段数值比较，next > cur 才算新版本 */
+function isNewerVersion(next, cur) {
+  const p = (s) => String(s).replace(/^v/i, '').split('.').map((x) => parseInt(x, 10) || 0);
+  const a = p(next);
+  const b = p(cur);
+  for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  return false;
+}
+
+/**
+ * GitHub Releases 直查兜底（zcode/qoder 式：问版本接口 → 下完整安装包 → 运行安装），
+ * 只依赖 GitHub API 与 release 资产本身，不依赖 electron-updater 的 latest.yml。
+ * 只认最新正式 release（prerelease / draft 不参与），安装包取 CreditDaddy-Setup-*.exe。
+ */
+async function fetchLatestReleaseFromGitHub() {
+  const m = /^https:\/\/github\.com\/([^/]+)\/([^/#?]+)/.exec(daemonInfo.homepage || DEFAULT_HOMEPAGE);
+  if (!m) throw new Error('无法从项目主页识别 GitHub 仓库');
+  const repo = `${m[1]}/${m[2].replace(/\.git$/, '')}`;
+  const res = await net.fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+    headers: { Accept: 'application/vnd.github+json' },
+  });
+  if (!res.ok) throw new Error(`GitHub API 返回 HTTP ${res.status}`);
+  const rel = await res.json();
+  const asset = (rel.assets || []).find((a) => /^CreditDaddy-Setup-.*\.exe$/.test(a.name));
+  if (!asset) throw new Error(`最新 release ${rel.tag_name} 没有 Windows 安装包`);
+  return {
+    version: String(rel.tag_name).replace(/^v/i, ''),
+    asset: { name: asset.name, url: asset.browser_download_url, size: asset.size || 0 },
+  };
+}
+
+/** 下载安装包到临时目录；release 里有 SHA256SUMS-desktop.txt 就校验哈希，对不上直接放弃 */
+async function downloadSetupInstaller(rel, onProgress, signal) {
+  let expectedSha = null;
+  const sumsRes = await net.fetch(rel.asset.url.replace(/[^/]+$/, 'SHA256SUMS-desktop.txt'), { signal }).catch(() => null);
+  if (sumsRes && sumsRes.ok) {
+    const line = (await sumsRes.text()).split('\n').find((l) => l.trim().endsWith(rel.asset.name));
+    if (line) expectedSha = line.trim().split(/\s+/)[0].toLowerCase();
+  }
+  const res = await net.fetch(rel.asset.url, { signal });
+  if (!res.ok) throw new Error(`下载安装包失败（HTTP ${res.status}）`);
+  const total = Number(res.headers.get('content-length')) || rel.asset.size || 0;
+  let buf;
+  if (res.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(Buffer.from(value));
+      got += value.length;
+      if (onProgress) onProgress(got, total);
+    }
+    buf = Buffer.concat(chunks);
+  } else {
+    buf = Buffer.from(await res.arrayBuffer());
+    if (onProgress) onProgress(buf.length, buf.length);
+  }
+  if (expectedSha && crypto.createHash('sha256').update(buf).digest('hex') !== expectedSha) {
+    throw new Error('安装包 SHA256 校验失败，已放弃安装');
+  }
+  const file = path.join(app.getPath('temp'), rel.asset.name);
+  fs.writeFileSync(file, buf);
+  return file;
+}
+
+/** 带进度小窗下载安装包（窗口标题 + 任务栏进度条，关窗即取消），成功返回安装包路径 */
+function downloadSetupWithUi(rel) {
+  return new Promise((resolve, reject) => {
+    const title = `正在下载 v${rel.version} 更新包`;
+    let dlWin = new BrowserWindow({
+      width: 440, height: 100, resizable: false, maximizable: false, fullscreenable: false,
+      title, autoHideMenuBar: true, webPreferences: { sandbox: true },
+    });
+    dlWin.setMenuBarVisibility(false);
+    dlWin.loadURL('data:text/html,' + encodeURIComponent(
+      `<meta charset="utf-8"><body style="margin:14px;font:13px/1.6 'Segoe UI',sans-serif;color:#444">`
+      + `<div>${rel.asset.name}</div><div id="p" style="margin-top:4px;color:#888">准备中…</div>`));
+    const ctrl = new AbortController();
+    let cancelled = false;
+    dlWin.on('closed', () => { cancelled = true; ctrl.abort(); });
+    const onProgress = (got, total) => {
+      const mb = (got / 1048576).toFixed(1);
+      const text = total ? `${Math.min(100, Math.round((got / total) * 100))}%（${mb} MB）` : `${mb} MB`;
+      try {
+        dlWin.setTitle(`${title} ${text}`);
+        dlWin.setProgressBar(total ? Math.min(1, got / total) : 2);
+        dlWin.webContents.executeJavaScript(`document.getElementById('p').textContent=${JSON.stringify(text)}`).catch(() => {});
+      } catch {}
+    };
+    downloadSetupInstaller(rel, onProgress, ctrl.signal)
+      .then((file) => { try { dlWin.destroy(); } catch {} resolve(file); })
+      .catch((e) => {
+        try { dlWin.destroy(); } catch {}
+        reject(cancelled ? Object.assign(new Error('已取消'), { name: 'AbortError' }) : e);
+      });
+  });
+}
+
+/** 兜底通道的两步引导：发现新版本 → 询问下载（带进度）→ 下载完成后询问运行安装 */
+async function offerFallbackInstall() {
+  const rel = updateState.fallback;
+  if (!rel) return;
+  if (rel.installerPath) {
+    const r = await dialog.showMessageBox({
+      type: 'question',
+      message: `v${rel.version} 安装包已下载完成`,
+      detail: '点击「立即安装」会运行安装程序（CreditDaddy 会先退出）。',
+      buttons: ['立即安装', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (r.response === 0) {
+      try {
+        spawn(rel.installerPath, [], { detached: true, stdio: 'ignore' }).unref();
+        quitting = true;
+        app.quit();
+      } catch (err) {
+        dialog.showErrorBox('启动安装程序失败', `${String((err && err.message) || err)}\n\n也可以手动运行已下载的安装包：\n${rel.installerPath}`);
+      }
+    }
+    return;
+  }
+  const r = await dialog.showMessageBox({
+    type: 'question',
+    message: `发现新版本 v${rel.version}（GitHub Releases）`,
+    detail: `将下载 ${rel.asset.name} 并运行安装${rel.asset.size ? `（约 ${Math.round(rel.asset.size / 1048576)} MB）` : ''}。`,
+    buttons: ['立即下载安装', '打开 Releases 页面', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+  });
+  if (r.response === 1) { shell.openExternal(daemonInfo.homepage + '/releases'); return; }
+  if (r.response !== 0) return;
+  try {
+    const file = await downloadSetupWithUi(rel);
+    updateState.fallback = { ...rel, installerPath: file };
+    refreshTrayMenu();
+    await offerFallbackInstall();
+  } catch (e) {
+    if ((e && e.name) === 'AbortError') return;
+    dialog.showMessageBox({
+      type: 'warning',
+      message: '下载更新失败',
+      detail: String((e && e.message) || e),
+      buttons: ['打开 Releases 页面', '取消'], defaultId: 0, cancelId: 1,
+    }).then((rr) => { if (rr.response === 0) shell.openExternal(daemonInfo.homepage + '/releases'); });
+  }
+}
+
+/** 后台静默兜底检查：electron-updater 报错（典型是 release 缺 latest.yml 的 404）时只提醒，不自动下载 */
+async function checkFallbackSilently() {
+  try {
+    if (updateState.fallback || updateState.downloaded || updateState.available) return;
+    const rel = await fetchLatestReleaseFromGitHub();
+    if (!isNewerVersion(rel.version, app.getVersion())) return;
+    updateState.fallback = rel;
+    refreshTrayMenu();
+    try {
+      const n = new Notification({
+        title: 'CreditDaddy 有新版本',
+        body: `v${rel.version} 已发布，点这里或从托盘菜单「检查更新…」下载安装。`,
+        silent: true,
+      });
+      n.on('click', () => checkForUpdateInteractive());
+      n.show();
+    } catch {}
+  } catch {}
+}
+
+function trayUpdateLabel() {
+  if (updateState.downloaded) return '重启并安装更新';
+  if (updateState.fallback) return updateState.fallback.installerPath ? `安装已下载的 v${updateState.fallback.version}` : `下载并安装新版本 v${updateState.fallback.version}…`;
+  return '检查更新…';
+}
+
 async function checkForUpdateInteractive() {
-  if (!autoUpdater || !app.isPackaged || process.platform !== 'win32' || process.env.PORTABLE_EXECUTABLE_DIR) {
+  if (!app.isPackaged || process.platform !== 'win32' || process.env.PORTABLE_EXECUTABLE_DIR) {
     dialog.showMessageBox({ type: 'info', message: '当前环境不支持应用内自动更新', detail: '开发模式 / Portable / 未签名的 macOS 版请从 GitHub Releases 手动下载新版本。', buttons: ['打开 Releases 页面', '取消'], defaultId: 0, cancelId: 1 })
       .then((r) => { if (r.response === 0) shell.openExternal(daemonInfo.homepage + '/releases'); });
     return;
@@ -130,8 +319,13 @@ async function checkForUpdateInteractive() {
     if (r.response === 0) { quitting = true; autoUpdater.quitAndInstall(false, true); }
     return;
   }
+  if (updateState.fallback) {   // 兜底通道已有进展（已发现版本 / 安装包已下载），直接续上
+    await offerFallbackInstall();
+    return;
+  }
+  refreshTrayMenu();
   try {
-    refreshTrayMenu();
+    if (!autoUpdater) throw new Error('electron-updater 不可用');
     const result = await autoUpdater.checkForUpdates();
     const v = result && result.updateInfo && result.updateInfo.version;
     if (updateState.downloaded) {
@@ -142,7 +336,24 @@ async function checkForUpdateInteractive() {
       dialog.showMessageBox({ type: 'info', message: `已是最新版本（v${app.getVersion()}）` });
     }
   } catch (e) {
-    dialog.showMessageBox({ type: 'warning', message: '检查更新失败', detail: String((e && e.message) || e) });
+    // electron-updater 失败（典型：release 缺 latest.yml 的 404）→ 直查 GitHub API 比版本号
+    try {
+      const rel = await fetchLatestReleaseFromGitHub();
+      if (!isNewerVersion(rel.version, app.getVersion())) {
+        dialog.showMessageBox({ type: 'info', message: `已是最新版本（v${app.getVersion()}）` });
+        return;
+      }
+      updateState.fallback = rel;
+      refreshTrayMenu();
+      await offerFallbackInstall();
+    } catch (e2) {
+      dialog.showMessageBox({
+        type: 'warning',
+        message: '检查更新失败',
+        detail: String((e2 && e2.message) || e2),
+        buttons: ['打开 Releases 页面', '取消'], defaultId: 0, cancelId: 1,
+      }).then((r) => { if (r.response === 0) shell.openExternal(daemonInfo.homepage + '/releases'); });
+    }
   }
 }
 
@@ -938,7 +1149,7 @@ function refreshTrayMenu() {
     { label: '项目主页（GitHub）', click: () => shell.openExternal(daemonInfo.homepage) },
     { type: 'separator' },
     ...(autoUpdater
-      ? [{ label: updateState.downloaded ? '重启并安装更新' : '检查更新…', click: () => { checkForUpdateInteractive(); } }]
+      ? [{ label: trayUpdateLabel(), click: () => { checkForUpdateInteractive(); } }]
       : []),
     { label: '退出 CreditDaddy', click: () => { quitting = true; app.quit(); } },
   ]));
