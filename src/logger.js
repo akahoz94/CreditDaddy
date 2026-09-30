@@ -59,3 +59,10 @@ export const logger = {
 export function getLogs(limit = 100) {
   return ring.slice(-limit);
 }
+
+/** 测试收尾用：归档流的句柄不关，测试进程的临时目录在 Windows 上删不掉 */
+export function closeArchiveStream() {
+  try { archiveStream?.end(); } catch {}
+  archiveStream = null;
+  archiveDay = null;
+}

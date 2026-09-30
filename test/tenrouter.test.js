@@ -16,7 +16,11 @@ process.env.APPDATA = path.join(home, 'AppData', 'Roaming');   // 10r 来源库�
 const us = await import('../src/usageSync.js');
 const tr = await import('../src/tenrouter.js');
 const hasSqlite = await us.sqliteAvailable();
-after(() => fs.rmSync(root, { recursive: true, force: true }));
+after(async () => {
+  const { closeArchiveStream } = await import('../src/logger.js');
+  closeArchiveStream();
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+});
 
 function mockFetch(handler) {
   const orig = globalThis.fetch;
@@ -400,7 +404,10 @@ test('10Router 本机来源：行转换带 gatewaySync 标记与出处（同 10r
 
 test('10Router 本机来源：读实例库、跳过无时间戳行；回环地址自动跳过（需要 node:sqlite）', { skip: !hasSqlite && 'node:sqlite 不可用（Node < 22.5）' }, async () => {
   const { DatabaseSync } = await import('node:sqlite');
-  const dir = path.join(home, 'AppData', 'Roaming', '10router', 'db');
+  // sourcePaths 按平台发现：win32 走 APPDATA，其余走 ~/.10router
+  const dir = process.platform === 'win32'
+    ? path.join(home, 'AppData', 'Roaming', '10router', 'db')
+    : path.join(home, '.10router', 'db');
   fs.mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(path.join(dir, 'data.sqlite'));
   db.exec('CREATE TABLE usageHistory (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, provider TEXT, model TEXT, connectionId TEXT, apiKey TEXT, endpoint TEXT, promptTokens INTEGER, completionTokens INTEGER, cost REAL, status TEXT, tokens TEXT, meta TEXT)');

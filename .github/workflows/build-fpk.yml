@@ -26,6 +26,13 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Version consistency (manifest vs package.json)
+        run: |
+          v=$(node -p "require('./package.json').version")
+          m=$(grep -E '^version[[:space:]]*=' fnos-packaging/manifest | head -1 | sed -E 's/.*=[[:space:]]*//' | tr -d '')
+          echo "package.json=$v manifest=$m"
+          [ "$v" = "$m" ] || { echo "ERROR: manifest 版本($m) ≠ package.json($v)：fpk 文件名取自 manifest，不一致会把旧版本号打进 Release"; exit 1; }
+
       - name: Run unit tests
         run: node --test "test/*.test.js"
 
