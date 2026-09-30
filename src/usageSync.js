@@ -28,8 +28,8 @@ import path from 'node:path';
 import { loadAccounts } from './store.js';
 import { fetchCatpawTokenDaily } from './catpawClient.js';
 
-export const SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo', 'catpaw'];
-export const SOURCE_LABEL = { zcode: 'ZCode', opencode: 'OpenCode', mirasim: 'mirasim', mimo: '小米 MiMo', catpaw: '妙手' };
+export const SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo', 'catpaw', '10r'];
+export const SOURCE_LABEL = { zcode: 'ZCode', opencode: 'OpenCode', mirasim: 'mirasim', mimo: '小米 MiMo', catpaw: '妙手', '10r': '10Router 本机' };
 const OVERLAP_MS = 2 * 86400e3;
 /** 结算窗：时间戳在此窗口内的行可能还在被来源更新（token 累计、时间字段回填），暂不发送 */
 const SETTLE_MS = 60 * 60 * 1000;
@@ -65,13 +65,25 @@ export function sourcePaths(home = os.homedir(), env = process.env, platform = p
     mimo.push(path.join(home, 'AppData', 'Roaming', 'Xiaomi MiMo', 'mimocode', 'mimocode.db'));
     mimo.push(path.join(local, 'mimocode', 'mimocode.db'));
   }
+  // 本机 10Router/9Router 实例的记账库（同 10router-sync 插件 --source 10r 的发现逻辑）；
+  // TENROUTER_DB 可显式指向另一个实例的库
+  const roaming = env.APPDATA || path.join(home, 'AppData', 'Roaming');
+  const routerDb = [];
+  if (env.TENROUTER_DB) routerDb.push(env.TENROUTER_DB);
+  if (platform === 'win32') {
+    routerDb.push(path.join(roaming, '10router', 'db', 'data.sqlite'));
+    routerDb.push(path.join(roaming, '9router', 'db', 'data.sqlite'));
+  } else {
+    routerDb.push(path.join(home, '.10router', 'db', 'data.sqlite'));
+    routerDb.push(path.join(home, '.9router', 'db', 'data.sqlite'));
+  }
   const exist = (list) => list.filter((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
   let mirasim = [];
   const insights = path.join(home, '.mirasim', 'insights');
   try {
     mirasim = fs.readdirSync(insights).filter((f) => /^usage-\d{4}-\d{2}\.ndjson$/.test(f)).sort().map((f) => path.join(insights, f));
   } catch {}
-  return { zcode: exist(zcode), opencode: exist(opencode), mirasim, mimo: exist(mimo) };
+  return { zcode: exist(zcode), opencode: exist(opencode), mirasim, mimo: exist(mimo), '10r': exist(routerDb) };
 }
 
 /** 本机检测到哪些来源 */
@@ -278,6 +290,74 @@ async function collectCatpaw(accounts, modelLabel, sentTotals = {}) {
   return { entries: out, notes, nextSentTotals: { ...sentTotals, ...nextSent } };
 }
 
+/** 本机 10Router/9Router 的 usageHistory 行 → 导入行（同 10router-sync 插件 --source 10r）。
+ * 平面列 + tokens/meta JSON 原样保留：10R 原生行带真实计费与错误状态，不做任何归零；
+ * meta.gatewaySync 只标「源实例原生产生的行」，源实例自己从别处导入的行保持 imported 标记，
+ * 聚合端据此排除健康度统计、并按行签名去重。 */
+export function convertRouterRow(row, dbPath, tag = 'creditdaddy') {
+  const safeParse = (v) => {
+    if (v && typeof v === 'object') return v;
+    try { return v ? JSON.parse(v) : {}; } catch { return {}; }
+  };
+  const tokens = safeParse(row.tokens);
+  const meta = safeParse(row.meta);
+  if (!meta.source) meta.source = '10r';
+  meta.syncedFrom = tag || dbPath;
+  meta.sourceDbPath = dbPath;   // 机器可查的出处，同实例防护据此拒绝回灌
+  if (meta.imported !== true) meta.gatewaySync = true;
+  if (row.connectionId) meta.sourceConnectionId = row.connectionId;
+  return {
+    timestamp: row.timestamp,
+    provider: row.provider || 'unknown',
+    model: row.model || 'unknown',
+    connectionId: null,   // 源实例的连接 uuid 对聚合端无意义，只留在 meta 里
+    apiKey: row.apiKey || null,
+    endpoint: row.endpoint || null,
+    promptTokens: row.promptTokens ?? tokens.prompt_tokens ?? tokens.input_tokens ?? 0,
+    completionTokens: row.completionTokens ?? tokens.completion_tokens ?? tokens.output_tokens ?? 0,
+    cost: row.cost || 0,
+    status: row.status || 'ok',
+    tokens,
+    meta,
+  };
+}
+
+function isLoopbackEndpoint(url) {
+  try {
+    const u = new URL(String(url || '').includes('://') ? url : 'http://' + url);
+    return u.hostname === 'localhost' || u.hostname === '::1' || u.hostname === '[::1]' || /^127\./.test(u.hostname);
+  } catch { return false; }
+}
+
+function collectRouter(files, endpoint) {
+  // 同实例防护（同插件的 exit 2 守卫）：地址是本机回环时，探测到的本机实例库就是它自己的账，
+  // 导回去会让存量行被打上 meta.imported 且全部去重命中。聚合端应把地址指向 NAS / 远端实例。
+  if (isLoopbackEndpoint(endpoint)) {
+    return { entries: [], notes: ['配置的 10Router 地址是本机回环：本机实例库就是它自己的账，不同步（聚合请把地址指向 NAS / 远端实例）'], files: files.length };
+  }
+  const out = [];
+  let noTs = 0;
+  for (const f of files) {
+    withSnapshot(f, (db) => {
+      let rows;
+      try {
+        rows = db.prepare('SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta FROM usageHistory ORDER BY id ASC').all();
+      } catch {
+        rows = db.prepare('SELECT timestamp, provider, model, promptTokens, completionTokens, tokens FROM usageHistory ORDER BY id ASC').all();
+      }
+      for (const r of rows) {
+        // NULL 时间戳的行会让服务端按「当下」回填，每次签名都不同，去重失效——绝不发
+        if (!r.timestamp) { noTs++; continue; }
+        out.push(convertRouterRow(r, f));
+      }
+    });
+  }
+  const notes = [];
+  if (noTs) notes.push(`跳过 ${noTs} 行无时间戳（会导致去重失效）`);
+  out.sort((x, y) => (x.timestamp < y.timestamp ? -1 : 1));
+  return { entries: out, notes, files: files.length };
+}
+
 // ── 读取 ──
 
 function withSnapshot(dbPath, fn) {
@@ -405,7 +485,8 @@ export async function collectSource(id, { endpoint, paths = sourcePaths(), catpa
   const r = id === 'zcode' ? collectZcode(files)
     : id === 'opencode' ? collectOpencode(files)
       : id === 'mimo' ? collectMimo(files)
-        : collectMirasim(files, endpoint);
+        : id === '10r' ? collectRouter(files, endpoint)
+          : collectMirasim(files, endpoint);
   return { ...r, files: files.length };
 }
 

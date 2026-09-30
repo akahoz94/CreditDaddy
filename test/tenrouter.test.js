@@ -11,6 +11,7 @@ const home = path.join(root, 'home');
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.LOCALAPPDATA = path.join(home, 'AppData', 'Local');
+process.env.APPDATA = path.join(home, 'AppData', 'Roaming');   // 10r 来源库也从假家目录发现
 
 const us = await import('../src/usageSync.js');
 const tr = await import('../src/tenrouter.js');
@@ -362,11 +363,76 @@ test('配置版本迁移：旧来源快照自动并入新增来源，显式保�
     // 旧版保存的来源快照：用户手动关掉了 opencode / mimo
     fs.writeFileSync(f, JSON.stringify({ ...orig, sync: { enabled: false, sources: ['zcode', 'mirasim'] } }));
     let c = tr.loadConfig();
-    assert.deepEqual([...c.sync.sources].sort(), ['catpaw', 'mirasim', 'zcode']);   // 妙手默认并入，手动关掉的不复活
+    assert.deepEqual([...c.sync.sources].sort(), ['10r', 'mirasim', 'zcode']);   // 新增来源默认并入，手动关掉的不复活
     await tr.updateConfig({ sources: ['mirasim'] });
     c = tr.loadConfig();
     assert.deepEqual(c.sync.sources, ['mirasim']);   // 显式保存过勾选结果后不再自动并入
   } finally {
     fs.writeFileSync(f, JSON.stringify(orig));
   }
+});
+
+test('10Router 本机来源：行转换带 gatewaySync 标记与出处（同 10router-sync 插件）', () => {
+  const native = us.convertRouterRow({
+    timestamp: '2026-09-29T10:00:00.000Z', provider: 'zcode-free', model: 'glm-5.3-flash',
+    connectionId: 'conn-1', apiKey: null, endpoint: 'http://127.0.0.1:47860/gateway',
+    promptTokens: 100, completionTokens: 20, cost: 0.5, status: 'ok',
+    tokens: JSON.stringify({ prompt_tokens: 100, completion_tokens: 20 }),
+    meta: null,
+  }, 'C:/appdata/10router/db/data.sqlite');
+  assert.equal(native.meta.source, '10r');
+  assert.equal(native.meta.gatewaySync, true, '原生行应标记为网关同步');
+  assert.equal(native.meta.sourceDbPath, 'C:/appdata/10router/db/data.sqlite');
+  assert.equal(native.meta.sourceConnectionId, 'conn-1');
+  assert.equal(native.connectionId, null, '源实例的连接 uuid 不进列');
+  assert.equal(native.promptTokens, 100);
+  assert.equal(native.cost, 0.5, '原生行的真实计费原样保留');
+
+  const imported = us.convertRouterRow({
+    timestamp: '2026-09-29T10:05:00.000Z', provider: 'zcode-bigmodel', model: 'GLM-5',
+    promptTokens: 5, completionTokens: 1, status: 'ok',
+    meta: JSON.stringify({ source: 'zcode', imported: true }),
+  }, 'C:/appdata/10router/db/data.sqlite');
+  assert.ok(!('gatewaySync' in imported.meta), '源实例自己导入的行不打 gatewaySync');
+  assert.equal(imported.meta.imported, true, 'imported 标记原样保留');
+  assert.equal(imported.meta.syncedFrom, 'creditdaddy');
+});
+
+test('10Router 本机来源：读实例库、跳过无时间戳行；回环地址自动跳过（需要 node:sqlite）', { skip: !hasSqlite && 'node:sqlite 不可用（Node < 22.5）' }, async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = path.join(home, 'AppData', 'Roaming', '10router', 'db');
+  fs.mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(path.join(dir, 'data.sqlite'));
+  db.exec('CREATE TABLE usageHistory (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, provider TEXT, model TEXT, connectionId TEXT, apiKey TEXT, endpoint TEXT, promptTokens INTEGER, completionTokens INTEGER, cost REAL, status TEXT, tokens TEXT, meta TEXT)');
+  const ins = db.prepare('INSERT INTO usageHistory (timestamp, provider, model, connectionId, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+  ins.run('2026-09-29T10:00:00.000Z', 'zcode-free', 'glm-5.3-flash', 'c1', 'http://127.0.0.1:47860/gateway', 100, 20, 0, 'ok', '{}', null);
+  ins.run(null, 'zcode-free', 'glm-5.3-flash', 'c2', 'x', 1, 1, 0, 'ok', '{}', null);   // 无时间戳
+  ins.run('2026-09-29T10:01:00.000Z', 'zcode-bigmodel', 'GLM-5', 'c3', 'x', 5, 1, 0, 'ok', '{}', JSON.stringify({ source: 'zcode', imported: true }));
+  db.close();
+
+  // 地址指向远端聚合端 → 正常同步
+  const r = await us.collectSource('10r', { endpoint: 'http://192.168.31.101:20127' });
+  assert.equal(r.entries.length, 2, '无时间戳的行应被跳过');
+  assert.ok(r.entries[0].meta.gatewaySync, '原生行带 gatewaySync');
+  assert.ok(!r.entries[1].meta.gatewaySync, '已导入行不带 gatewaySync');
+  assert.match(r.notes.join(''), /无时间戳/);
+
+  // 地址指向本机 → 同实例防护：自己导自己只会把存量行打成 imported
+  const guard = await us.collectSource('10r', { endpoint: 'http://127.0.0.1:20128' });
+  assert.equal(guard.entries.length, 0);
+  assert.match(guard.notes.join(''), /回环|自己/);
+});
+
+test('来源版本迁移：v2 配置自动并入 10r，不复活已禁用的旧来源', () => {
+  const file = path.join(process.env.CREDITDADDY_HOME, 'tenrouter.json');
+  fs.mkdirSync(process.env.CREDITDADDY_HOME, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({
+    endpoint: 'http://nas:20127', key: 'sk-x',
+    sync: { enabled: true, sources: ['zcode', 'mimo'], sourcesVersion: 2 }, syncState: {}, lastSync: null,
+  }));
+  const c = tr.loadConfig();
+  assert.ok(c.sync.sources.includes('10r'), '新来源应默认并入');
+  assert.ok(c.sync.sources.includes('zcode') && c.sync.sources.includes('mimo'), '已有勾选保留');
+  assert.ok(!c.sync.sources.includes('catpaw'), '用户没勾的旧来源不复活');
+  assert.equal(c.sync.sourcesVersion, 3);
 });

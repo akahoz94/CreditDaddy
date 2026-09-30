@@ -494,7 +494,7 @@
     <div class="field"><label>用量同步（同 10router-sync 插件）</label>
       <div><label class="check"><input type="checkbox" id="tr-auto"> 每小时自动同步本机用量到 10Router</label></div>
       <div id="tr-sources" style="margin-top:6px"></div>
-      <div class="hint" style="margin-top:4px">ZCode 只同步官方渠道；经 10Router 中转的 mirasim 调用会跳过，避免重复计数。10Router 按行签名去重，重复同步不会产生重复数据。</div>
+      <div class="hint" style="margin-top:4px">ZCode 只同步官方渠道；经 10Router 中转的 mirasim 调用会跳过，避免重复计数。「10Router 本机」只把实例原生产生的行标记为网关同步。10Router 按行签名去重，重复同步不会产生重复数据。</div>
     </div>
     <div class="field"><label>显示</label>
       <div><label class="check"><input type="checkbox" id="tr-hide-empty"> 「全部」视图隐藏没有额度 / 余额为 0 的供应商汇总卡</label></div>
@@ -1702,7 +1702,8 @@ function trSetupHtml() {
   return '<div class="setup"><h3>接入 10Router</h3>'
     + '<div class="hint">填 10Router 的地址和一个<b>虚拟 key</b>（10Router 仪表盘 → API Keys 创建的 sk-…），就能在这里：</div>'
     + '<div class="hint" style="margin:6px 0 12px">· 查看 10Router 里其他供应商（Claude / Codex / Kiro / GLM …）的额度卡片（需要 10Router 1.2.1+）<br>'
-    + '· 把本机 ZCode / OpenCode / mirasim / 小米 MiMo 的用量同步进 10Router 的用量统计（同 10router-sync 插件，自动每小时一次）</div>'
+    + '· 把本机 ZCode / OpenCode / mirasim / 小米 MiMo / 10Router 的用量同步进 10Router 的用量统计（同 10router-sync 插件，自动每小时一次）<br>'
+    + '· 「10Router 本机」= 本机 10Router 实例自己记的账（如 zcode-free 经它中转的行）同步到聚合端；地址指向本机时自动跳过，避免自己导自己</div>'
     + '<button class="btn primary" data-tr="settings">' + I.plus + '配置 10Router</button></div>';
 }
 

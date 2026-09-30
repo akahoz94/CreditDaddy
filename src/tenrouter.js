@@ -21,9 +21,9 @@ const IMPORT_TIMEOUT_MS = 120_000;
 const BATCH = 5000;
 const SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_CONFIG = { endpoint: '', key: '', adminPassword: '', sync: { enabled: false, sources: [...SOURCES], sourcesVersion: 2 }, syncState: {}, lastSync: null };
-// v0.9.6 及更早保存的来源全集；版本迁移只补「此后新增」的来源，不复活用户手动关掉的
-const LEGACY_SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo'];
-const SOURCES_VERSION = 2;
+// v1.0.0 及更早保存的来源全集；版本迁移只补「此后新增」的来源，不复活用户手动关掉的
+const LEGACY_SOURCES = ['zcode', 'opencode', 'mirasim', 'mimo', 'catpaw'];
+const SOURCES_VERSION = 3;   // 3: 新增 10Router 本机实例来源（10r）
 
 export function loadConfig() {
   try {
