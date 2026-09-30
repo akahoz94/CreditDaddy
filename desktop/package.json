@@ -25,6 +25,8 @@
     "files": [
       "main.js",
       "preload.js",
+      "preload-container.js",
+      "passwordStore.js",
       "package.json",
       "icon.png",
       "icon.ico"
