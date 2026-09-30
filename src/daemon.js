@@ -56,7 +56,7 @@ import { readWorkbuddySessions, writeWorkbuddySession, workbuddyAuthDir, current
 import { liveToAccount as zcodeLiveAccount, switchTo as zcodeSwitchTo, currentZcodeUid, currentZcodeIdentity, detectZcode, ensureVirtualDeviceMid, terminateZcode, zcodeRunning } from './zcodeLocal.js';
 import { liveToAccount as mirasimLiveAccount, switchTo as mirasimSwitchTo, currentMirasimUid, detectMirasim, terminateMirasim, mirasimRunning } from './mirasimLocal.js';
 import { liveToAccount as catpawLiveAccount, switchTo as catpawSwitchTo, currentCatpawToken, detectCatpaw, terminateCatpaw } from './catpawLocal.js';
-import { liveToAccount as traeLiveAccount, detectTrae } from './traeLocal.js';
+import { liveToAccount as traeLiveAccount, detectTrae, switchTo as traeSwitchTo, terminateTrae, snapshotLive as traeSnapshotLive } from './traeLocal.js';
 import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, autoClaimUntil, setAutoClaimEnabled } from './zcodeClient.js';
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
 import { syncAccountsTo10r } from './tenrouterAccounts.js';
@@ -458,7 +458,31 @@ async function handleApi(req, res, url) {
         return json(res, e.catpawRunning ? 409 : 400, { error: e.message, code: e.catpawRunning ? 'CATPAW_RUNNING' : undefined });
       }
     }
-    if (!target.provider.startsWith('workbuddy')) return json(res, 400, { error: '只有 WorkBuddy / ZCode / mirasim / 妙手 账号支持切换' });
+    if (target.provider === 'trae') {
+      // 防丢号：先把 Trae 当前登录同步进账号库并建快照，再覆盖成目标账号的登录态
+      try {
+        const live = await traeLiveAccount();
+        if (live && live.token !== target.token) {
+          await addAccount(live, { trusted: true }).catch((e) => logger.warn('DAEMON', '同步 Trae 当前登录失败：' + e.message));
+          traeSnapshotLive();
+        }
+      } catch (e) {}
+      try {
+        let closedClient = false;
+        if (body?.force === true) {
+          const t = terminateTrae();
+          closedClient = t.closed === true;
+          if (closedClient) logger.info('DAEMON', '已关闭 Trae 客户端（强制切换）');
+          else if (t.running) logger.warn('DAEMON', '未能完全结束 Trae 进程，继续强制切换');
+        }
+        const r = await traeSwitchTo(target, { force: body?.force === true });
+        logger.info('DAEMON', r.alreadyActive ? `Trae 当前已是 ${target.name || target.id}` : `Trae 已切换到 ${target.name || target.id}（重新打开客户端生效）`);
+        return json(res, 200, { ok: true, closedClient, ...r });
+      } catch (e) {
+        return json(res, e.traeRunning ? 409 : 400, { error: e.message, code: e.traeRunning ? 'TRAE_RUNNING' : undefined });
+      }
+    }
+    if (!target.provider.startsWith('workbuddy')) return json(res, 400, { error: '只有 WorkBuddy / ZCode / mirasim / 妙手 / Trae 账号支持切换' });
     // 先把客户端当前会话的最新 token 收回账号库，避免被覆盖后丢失
     const cur = readWorkbuddySessions().accounts.find((a) => a.current);
     if (cur && cur.uid !== target.uid) {
@@ -604,6 +628,8 @@ async function handleApi(req, res, url) {
       { trusted: Boolean(cand.record) },
     );
     if (duplicate && !updated) return json(res, 409, { error: '该账号已存在，信息已是最新' });
+    // Trae 的登录态是 15 项文件快照而非单个凭据文件，导入时就建一次快照，否则该账号不可切换
+    if (account.provider === 'trae') traeSnapshotLive();
     logger.info('DAEMON', (updated ? '已用本机凭据更新：' : '从本机导入账号：') + (account.name || account.id));
     return json(res, updated ? 200 : 201, { account: publicAccount(account), updated });
   }

@@ -1271,7 +1271,7 @@ function renderStatus() {
     n.style.display = '';
     n.innerHTML = 'Trae 每日签到领约 150 通用积分（领到的额度是独立资源包，7 天后到期，所以会累积成几十包——面板已按名称合并显示）。'
       + '凭据只来自本机 Trae 客户端的 storage.json（本地解密，token 不出本机），token 约 14 天过期，失效后在 Trae 里重新登录再「本机导入」一次即可。'
-      + '多账号：先在 Trae 里登录某个账号 → 导入 → 再切换登录下一个 → 再导入。'
+      + '多账号：在 Trae 里登录某个账号 → 导入（会自动拍下该账号的登录态快照）→ 换下一个账号登录 → 再导入；之后点账号上的切换按钮即可一键互换，换走的账号登录态都会留着不丢。'
       + traeClientChip(s);
   } else if (state.view === 'catpaw') {
     n.style.display = '';
@@ -2003,14 +2003,16 @@ async function onCardClick(e) {
         ? '\n需先退出 Mirasim；切换后重新打开即为新账号。当前登录会先保存到 CreditDaddy，不会丢号。'
         : a && a.product === 'catpaw'
           ? '\n需先退出妙手；切换后重新打开妙手即为新账号。当前登录会先保存到 CreditDaddy，不会丢号。'
-          : '\n客户端会自动应用新会话；当前登录账号的最新 token 会先保存到 CreditDaddy。';
+          : a && a.product === 'trae'
+            ? '\n需先退出 Trae；切换后重新打开 Trae 即为新账号。当前登录会先自动快照保存到 CreditDaddy，不会丢号。'
+            : '\n客户端会自动应用新会话；当前登录账号的最新 token 会先保存到 CreditDaddy。';
     if (!(await uiConfirm('把 ' + client + ' 切换到「' + (a && a.name || id) + '」？' + tip, '切换账号', '切换'))) return;
     const doSwitch = (force) => api('/api/accounts/' + encodeURIComponent(id) + '/switch', { json: { force } });
     try {
       let r;
       try { r = await doSwitch(false); }
       catch (err) {
-        if (err.code !== 'ZCODE_RUNNING' && err.code !== 'MIRASIM_RUNNING' && err.code !== 'CATPAW_RUNNING') throw err;
+        if (err.code !== 'ZCODE_RUNNING' && err.code !== 'MIRASIM_RUNNING' && err.code !== 'CATPAW_RUNNING' && err.code !== 'TRAE_RUNNING') throw err;
         if (!(await uiConfirm(err.message + '\n\n仍要强制切换吗？强制切换会先关闭客户端再写入登录，重新打开客户端即为新账号。', client + ' 正在运行', '关闭并强制切换'))) return;
         r = await doSwitch(true);
       }

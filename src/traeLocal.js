@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { dataDir } from './store.js';
 
 const APP_NAMES = ['TRAE SOLO CN', 'Trae CN', 'TRAE SOLO', 'Trae'];
 const EXE_NAMES = ['TRAE SOLO CN.exe', 'Trae CN.exe', 'TRAE SOLO.exe', 'Trae.exe'];
@@ -58,6 +59,11 @@ function appDataRoot() {
 
 /** 本机 Trae 数据目录（第一个含 storage.json 的），没有则 null */
 export function traeDataDir() {
+  const override = process.env.TRAE_HOME;
+  if (override) {
+    const file = path.join(override, 'User', 'globalStorage', 'storage.json');
+    return fs.existsSync(file) ? override : null;
+  }
   for (const name of APP_NAMES) {
     const file = path.join(appDataRoot(), name, 'User', 'globalStorage', 'storage.json');
     if (fs.existsSync(file)) return path.dirname(path.dirname(path.dirname(file)));
@@ -211,3 +217,117 @@ export function terminateTrae({ timeoutMs = 8000 } = {}) {
 
 /** 测试钩子 */
 export function _setRunningForTests(running) { runningOverride = running; }
+
+// ── 登录态快照与切换 ──
+
+/**
+ * 登录态白名单（对齐 TraeWorkAssistant switcher/icube.rs 的 ICUBE_ITEMS）。
+ * 备份与恢复用同一张表：表外的文件不动，避免把用户的工程配置一起换掉。
+ */
+const SLOT_ITEMS = [
+  'User/globalStorage/storage.json',
+  'User/globalStorage/state.vscdb',
+  'User/globalStorage/state.vscdb-wal',
+  'User/globalStorage/state.vscdb-shm',
+  'User/globalStorage/state.vscdb.backup',
+  'machineid',
+  'aha',
+  'Preferences',
+  'Local State',
+  'Local Storage/leveldb',
+  'Local Storage/config.db',
+  'Network',
+  'Partitions/trae-webview',
+  'Partitions/icube-web-crawler-shared-session-v1.0',
+  'Session Storage',
+];
+
+const slotDir = (uid) => path.join(dataDir(), 'trae-slots', String(uid));
+
+export function hasSlot(uid) {
+  return Boolean(uid) && fs.existsSync(path.join(slotDir(uid), 'User', 'globalStorage', 'storage.json'));
+}
+
+/**
+ * Chromium 缓存目录：与登录态无关，但本机实测占快照体积的 91/106 MB
+ * （Partitions/trae-webview/Cache 43MB + icube-web-crawler 的 Code Cache 48MB），
+ * 每个账号都拷一份既慢又白占磁盘，跳过。
+ */
+const CACHE_NAMES = new Set(['Cache', 'Code Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'Shared Dictionary', 'blob_storage']);
+const notCache = (p) => !CACHE_NAMES.has(path.basename(p));
+
+function copyInto(src, dst) {
+  fs.rmSync(dst, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  const isDir = fs.statSync(src).isDirectory();
+  fs.cpSync(src, dst, isDir ? { recursive: true, filter: notCache } : undefined);
+}
+
+/** 把当前登录的 15 项快照到 trae-slots/<uid>/，旧快照转成 .bak 保留一代 */
+function saveSlot(uid) {
+  const root = traeDataDir();
+  if (!root || !uid) return 0;
+  const dest = slotDir(uid);
+  if (fs.existsSync(dest)) {
+    fs.rmSync(dest + '.bak', { recursive: true, force: true });
+    fs.renameSync(dest, dest + '.bak');
+  }
+  fs.mkdirSync(dest, { recursive: true });
+  let n = 0;
+  for (const rel of SLOT_ITEMS) {
+    const src = path.join(root, ...rel.split('/'));
+    if (!fs.existsSync(src)) continue;
+    copyInto(src, path.join(dest, ...rel.split('/')));
+    n++;
+  }
+  return n;
+}
+
+function restoreSlot(uid) {
+  const root = traeDataDir();
+  const src = slotDir(uid);
+  if (!root || !fs.existsSync(src)) return 0;
+  let n = 0;
+  for (const rel of SLOT_ITEMS) {
+    const from = path.join(src, ...rel.split('/'));
+    if (!fs.existsSync(from)) continue;
+    copyInto(from, path.join(root, ...rel.split('/')));
+    n++;
+  }
+  return n;
+}
+
+/**
+ * 把本机 Trae 切到目标账号的登录态：先快照当前登录（防丢号），再覆盖回目标快照。
+ * Trae 在运行时会把内存里的旧登录写回文件，所以必须先退出（force 时代为退出）。
+ */
+export async function switchTo(account, { force = false } = {}) {
+  const live = readLiveAuth();
+  if (!live) throw new Error('本机 Trae 没有可读取的登录态（storage.json 缺失或解不开）');
+  const cur = live.auth.userId;
+  if (account.uid && cur && String(account.uid) === String(cur)) return { switched: false, alreadyActive: true };
+
+  if (traeRunning()) {
+    if (!force) {
+      const e = new Error('Trae 客户端正在运行，请先退出后再切换（或强制切换，切换后自动重新拉起 Trae）');
+      e.traeRunning = true;
+      throw e;
+    }
+    terminateTrae();
+  }
+
+  if (cur) saveSlot(cur);
+  if (!hasSlot(account.uid)) {
+    throw new Error(`账号「${account.name || account.uid}」还没有登录态快照：请先在 Trae 里登录该账号，再回这里点一次「本机导入」`);
+  }
+  restoreSlot(account.uid);
+  return { switched: true, alreadyActive: false };
+}
+
+/** 供 daemon 在导入成功后立即建快照（否则新导入的账号没有可恢复的登录态） */
+export function snapshotLive() {
+  try {
+    const live = readLiveAuth();
+    return live?.auth?.userId ? saveSlot(live.auth.userId) : 0;
+  } catch { return 0; }
+}
