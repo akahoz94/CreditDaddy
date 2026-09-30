@@ -148,12 +148,14 @@
   #cap-holder { margin-top: 10px; min-height: 0; }
   #cap-btn { margin-top: 10px; }
   .bar { display: flex; gap: 2px; width: 100%; height: 5px; background: color-mix(in srgb, var(--tertiary) 80%, transparent); border-radius: 3px; overflow: hidden; }
-  .seg { display: block; height: 5px; min-width: 3px; background: rgba(var(--accent-rgb), var(--a, 1)); transition: filter .15s; }
+  .seg { display: block; height: 5px; min-width: 3px; background: var(--ok); opacity: var(--a, 1); transition: filter .15s; }
   .seg.used { background: color-mix(in srgb, var(--text-3) 35%, transparent); }
   .seg:hover { filter: brightness(1.12); }
   .msg { margin-top: 7px; font-size: 11px; color: var(--text-3); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msg.err { color: var(--err); }
   .empty { grid-column: 1 / -1; text-align: center; color: var(--text-3); padding: 42px 12px; font-size: 13px; line-height: 1.9; }
+  .gw-line { text-align: center; color: var(--text-3); padding: 14px 16px 4px; font-size: 13px; line-height: 1.9; }
+  .kpi-label[title], .stat span[title] { cursor: help; }
 
   /* section card */
   .pcard { margin-top: 14px; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 12px 14px; }
@@ -227,7 +229,7 @@
   .prod-rows { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; font-size: 12px; align-items: center; }
   .prod-rows .val { text-align: right; }
   .meter { height: 5px; background: color-mix(in srgb, var(--tertiary) 80%, transparent); border-radius: 3px; overflow: hidden; }
-  .meter span { display: block; height: 100%; background: rgb(var(--accent-rgb)); border-radius: 3px; }
+  .meter span { display: block; height: 100%; background: var(--ok); border-radius: 3px; }
   .dash-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .dash-cols .pcard { margin-top: 0; min-width: 0; }
   .item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 4px; margin: 0 -4px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; cursor: pointer; border-radius: 6px; }
@@ -255,6 +257,7 @@
   .tr-vcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
   @media (max-width: 1180px) { .tr-vcards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 820px) { .tr-vcards { grid-template-columns: 1fr; } }
+  .tr-card.flat { align-self: start; }
   .tr-card { border: 1px solid var(--border-subtle); border-radius: 12px; padding: 11px 12px 12px; background: var(--surface); min-width: 0; }
   .tr-card.off { opacity: .6; }
   .tr-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
@@ -266,7 +269,7 @@
   .tr-q-val { font-variant-numeric: tabular-nums; white-space: nowrap; }
   .tr-q-val.low { color: var(--err); font-weight: 600; }
   .tr-meter { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--tertiary) 80%, transparent); overflow: hidden; }
-  .tr-meter span { display: block; height: 100%; border-radius: 3px; background: rgb(var(--accent-rgb)); }
+  .tr-meter span { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
   .tr-meter span.low { background: var(--err); }
   .tr-meter span.mid { background: #d97706; }
   .tr-reset { color: var(--text-3); font-weight: 400; }
@@ -1075,8 +1078,8 @@ function renderProd() {
     // 国内版 = 每日签到送积分；国际版 = 保持活跃（活跃不等于必有奖励）
     const cnAcc = acc.filter((a) => a.provider === 'workbuddy');
     const intlAcc = acc.filter((a) => a.provider === 'workbuddy-intl');
-    $('s-done-wrap').innerHTML = (cnAcc.length ? '<div class="stat"><span>领取（国内）</span><strong>' + cnAcc.filter(isDone).length + ' / ' + cnAcc.length + '</strong></div><div class="divider"></div>' : '')
-      + (intlAcc.length ? '<div class="stat"><span>活跃（国际）</span><strong>' + intlAcc.filter(isDone).length + ' / ' + intlAcc.length + '</strong></div><div class="divider"></div>' : '');
+    $('s-done-wrap').innerHTML = (cnAcc.length ? '<div class="stat"><span title="国内版每日签到送积分">领取（国内）</span><strong>' + cnAcc.filter(isDone).length + ' / ' + cnAcc.length + '</strong></div><div class="divider"></div>' : '')
+      + (intlAcc.length ? '<div class="stat"><span title="国际版定期发送活跃请求保持资格；活跃不等于必有奖励">活跃（国际）</span><strong>' + intlAcc.filter(isDone).length + ' / ' + intlAcc.length + '</strong></div><div class="divider"></div>' : '');
   } else {
     // 从 WorkBuddy 页切回来时 s-done 可能被 innerHTML 换没了，先重建结构再写值
     if (!$('s-done')) $('s-done-wrap').innerHTML = '<div class="stat"><span>今日已领</span><strong id="s-done"></strong></div><div class="divider"></div>';
@@ -1086,7 +1089,7 @@ function renderProd() {
   $('s-credits-label').textContent = CREDIT_VIEWS.has(prod) ? '有效套餐' : '剩余积分';
   $('s-credits').textContent = CREDIT_VIEWS.has(prod)
     ? acc.filter((a) => { const q = state.quotas[a.id]; return q && !q.error && !q.empty; }).length + ' / ' + acc.length
-    : c.known ? fmtNum(c.sum) : '-';
+    : c.loading ? '…' : (c.known ? fmtNum(c.sum) : '-');
   const hasRegions = !CREDIT_VIEWS.has(prod);
   $('region').style.display = hasRegions ? '' : 'none';
   $('region-div').style.display = hasRegions ? '' : 'none';
@@ -1098,8 +1101,8 @@ function renderProd() {
   }
 }
 
-function kpi(label, value, sub) {
-  return '<div class="kpi"><div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div><div class="kpi-sub" title="' + esc(sub.replace(/<[^>]+>/g, '')) + '">' + sub + '</div></div>';
+function kpi(label, value, sub, labelTitle) {
+  return '<div class="kpi"><div class="kpi-label"' + (labelTitle ? ' title="' + esc(labelTitle) + '"' : '') + '>' + label + '</div><div class="kpi-value">' + value + '</div><div class="kpi-sub" title="' + esc(sub.replace(/<[^>]+>/g, '')) + '">' + sub + '</div></div>';
 }
 const meter = (done, total) => '<div class="meter"><span style="width:' + (total ? Math.round(done / total * 100) : 0) + '%"></span></div>';
 
@@ -1125,8 +1128,9 @@ function renderDash() {
         : done + ' <small>/ ' + signable.length + '</small>',
       !signable.length ? '暂无可领取的账号'
         : (doneDom === domAcc.length && doneIntl === intlAcc.length ? (intlAcc.length ? '今天全部完成（国际为活跃请求，不保证奖励）' : '今天全部签完')
-        : '待办 ' + (signable.length - done) + (failed ? ' · 失败 ' + failed : '')))
-    + kpi('剩余积分', credit.known ? fmtNum(credit.sum) : '-', credit.loading ? '读取中（' + credit.loading + ' 个账号）…' : creditByProd)
+        : '待办 ' + (signable.length - done) + (failed ? ' · 失败 ' + failed : '')),
+      '领取 = 国内版每日签到；活跃 = 国际版定期活跃请求（保持资格，不保证奖励）')
+    + kpi('剩余积分', credit.loading ? '…' : (credit.known ? fmtNum(credit.sum) : '-'), credit.loading ? '正在读取各账号额度…' : creditByProd)
     + kpi('下次自动领取', sch.ticking ? '领取中…' : sch.nextTickAt ? fmtTime(sch.nextTickAt).slice(11) : '-',
       sch.lastTick ? '上一轮 ' + fmtTime(sch.lastTick.at).slice(5) + ' · ' + esc(sch.lastTick.summary || '') : '每 ~2 小时一轮');
 
@@ -1563,7 +1567,7 @@ function trCardHtml(c) {
         + trPacksHtml(c, packs);
     }
   }
-  return '<div class="tr-card' + (c.isActive ? '' : ' off') + '" draggable="true" data-id="' + esc(c.id) + '" data-vendor="' + esc(c.providerName || c.provider || '') + '"><div class="row1"><div class="name-group">'
+  return '<div class="tr-card' + (c.isActive ? '' : ' off') + (body && body.startsWith('<div class="msg') ? ' flat' : '') + '" draggable="true" data-id="' + esc(c.id) + '" data-vendor="' + esc(c.providerName || c.provider || '') + '"><div class="row1"><div class="name-group">'
     + '<span class="badge prod tenrouter">' + esc(c.providerName) + '</span>'
     + (TR_REGION[c.provider] ? '<span class="badge ' + TR_REGION[c.provider][1] + '">' + TR_REGION[c.provider][0] + '</span>' : '')
     + '<span class="tr-name" title="' + esc([c.name, c.email].filter(Boolean).join(' · ')) + '">' + esc(who) + '</span>'
@@ -1689,7 +1693,7 @@ function trVendorCardHtml(g) {
         ? '<div class="tr-summary dim"><span class="tr-sum-txt">' + briefs.join(' · ') + '</span></div>'
         : '');
   }
-  return '<div class="tr-card" draggable="true" data-vendor="' + esc(g.name) + '"><div class="row1"><div class="name-group">'
+  return '<div class="tr-card' + (quotaHtml && quotaHtml.startsWith('<div class="msg') ? ' flat' : '') + '" draggable="true" data-vendor="' + esc(g.name) + '"><div class="row1"><div class="name-group">'
     + '<span class="badge prod tenrouter">' + esc(g.name) + '</span>'
     + (TR_REGION[prov] ? '<span class="badge ' + TR_REGION[prov][1] + '">' + TR_REGION[prov][0] + '</span>' : '')
     + '<span class="badge">' + items.length + ' 个账号</span>'
@@ -1712,7 +1716,7 @@ function renderTenrouter() {
   const c = tr.config;
   if (!c) { box.innerHTML = '<div class="empty">加载中…</div>'; return; }
   const gwLine = state.zGateway === true
-    ? '<div class="empty" style="margin-bottom:10px">ZCode 体验包接口：<b>运行中</b>' + (state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' · 最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · ' + state.zGatewayStats.calls + ' 次 · 最后用号 ' + esc(state.zGatewayStats.lastAccount || '-') : '（尚未有调用）') + ' — 体验包模型 <code>zcode-free/glm-5.3-flash</code></div>'
+    ? '<div class="gw-line">ZCode 体验包接口：<b>运行中</b>' + (state.zGatewayStats && state.zGatewayStats.lastCallAt ? ' · 最近调用 ' + esc(String(state.zGatewayStats.lastCallAt).slice(11, 19)) + ' · ' + state.zGatewayStats.calls + ' 次 · 最后用号 ' + esc(state.zGatewayStats.lastAccount || '-') : '（尚未有调用）') + ' — 体验包模型 <code>zcode-free/glm-5.3-flash</code></div>'
     : '';
   if (!c.configured) { box.innerHTML = gwLine + trSetupHtml(); return; }
   const list = (tr.quotas && tr.quotas.connections) || [];
