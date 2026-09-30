@@ -56,6 +56,7 @@ import { readWorkbuddySessions, writeWorkbuddySession, workbuddyAuthDir, current
 import { liveToAccount as zcodeLiveAccount, switchTo as zcodeSwitchTo, currentZcodeUid, currentZcodeIdentity, detectZcode, ensureVirtualDeviceMid, terminateZcode, zcodeRunning } from './zcodeLocal.js';
 import { liveToAccount as mirasimLiveAccount, switchTo as mirasimSwitchTo, currentMirasimUid, detectMirasim, terminateMirasim, mirasimRunning } from './mirasimLocal.js';
 import { liveToAccount as catpawLiveAccount, switchTo as catpawSwitchTo, currentCatpawToken, detectCatpaw, terminateCatpaw } from './catpawLocal.js';
+import { liveToAccount as traeLiveAccount, detectTrae } from './traeLocal.js';
 import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, autoClaimUntil, setAutoClaimEnabled } from './zcodeClient.js';
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
 import { syncAccountsTo10r } from './tenrouterAccounts.js';
@@ -68,7 +69,7 @@ import { startDeviceFlow, pollDeviceFlow, LOGIN_KINDS } from './authDevice.js';
 import { detectInstalls, scanLocalTokens, putCandidate, peekCandidate } from './localDetect.js';
 import { PROVIDER_LABEL, APP_VERSION, PROVIDERS, PROJECT_URL } from './constants.js';
 
-const PRODUCT_IDS = ['qoder', 'workbuddy', 'zcode', 'mirasim', 'catpaw'];
+const PRODUCT_IDS = ['qoder', 'workbuddy', 'zcode', 'mirasim', 'catpaw', 'trae'];
 
 /** 面板访问密码：面板「设置」写入的 settings.json.panelKey 优先（可设 / 可关）；
  *  未设置（或被面板关闭）时回退环境变量 CREDITDADDY_PASSWORD（fnOS / 命令行部署注入），
@@ -522,7 +523,7 @@ async function handleApi(req, res, url) {
 
   // ── 本机检测 / 凭据扫描 ──
   if (p === '/api/local/detect' && method === 'GET') {
-    return json(res, 200, { apps: detectQoderApps(), workbuddyDir: workbuddyAuthDir(), zcode: detectZcode(), mirasim: detectMirasim(), catpaw: detectCatpaw(), legacy: detectInstalls() });
+    return json(res, 200, { apps: detectQoderApps(), workbuddyDir: workbuddyAuthDir(), zcode: detectZcode(), mirasim: detectMirasim(), catpaw: detectCatpaw(), trae: detectTrae(), legacy: detectInstalls() });
   }
   if (p === '/api/local/scan' && method === 'POST') {
     const existing = await loadAccounts();
@@ -575,7 +576,12 @@ async function handleApi(req, res, url) {
       const cp = await catpawLiveAccount();
       if (cp) addRecord(cp, { source: '妙手当前登录', current: true });
     } catch (e) { errors.push({ file: 'catpaw-moon/catx-credential.json', error: e.message }); }
-    // 6) 旧版 VS Code 系 Qoder IDE / CLI：明文 token 扫描（归属需用户选择）
+    // 6) Trae 客户端：解密 <userData>\User\globalStorage\storage.json 的 tc 信封当前登录
+    try {
+      const tr = await traeLiveAccount();
+      if (tr) addRecord(tr, { source: 'Trae 当前登录', current: true });
+    } catch (e) { errors.push({ file: 'TRAE SOLO CN/User/globalStorage/storage.json', error: e.message }); }
+    // 7) 旧版 VS Code 系 Qoder IDE / CLI：明文 token 扫描（归属需用户选择）
     const det = detectInstalls();
     const dirs = det.ideDataDirs.filter(d => d.exists).map(d => d.path);
     if (det.cliDir.exists) dirs.push(det.cliDir.path);
@@ -675,6 +681,7 @@ async function handleApi(req, res, url) {
     const state = await loadState();
     // 妙手凭据文件只存 token：当前登录按 token 对齐账号库，避免每轮状态都打网关查 uid
     const cpToken = currentCatpawToken();
+    const traeDet = detectTrae();
     return json(res, 200, {
       ok: true,
       app: 'CreditDaddy',
@@ -697,6 +704,8 @@ async function handleApi(req, res, url) {
       mirasimClient: (() => { const d = detectMirasim(); return { installed: d.clientInstalled, signedIn: d.signedIn, running: d.running }; })(),
       catpawCurrentUid: (cpToken && accounts.find((a) => a.provider === 'catpaw' && a.token === cpToken)?.uid) || null,
       catpawClient: (() => { const d = detectCatpaw(); return { installed: d.clientInstalled, signedIn: d.signedIn, running: d.running }; })(),
+      traeCurrentUid: traeDet.uid,
+      traeClient: { installed: traeDet.clientInstalled, signedIn: traeDet.signedIn, running: traeDet.running },
       keyRequired: Boolean(PANEL_KEY),
     });
   }
