@@ -56,7 +56,7 @@ import { readWorkbuddySessions, writeWorkbuddySession, workbuddyAuthDir, current
 import { liveToAccount as zcodeLiveAccount, switchTo as zcodeSwitchTo, currentZcodeUid, currentZcodeIdentity, detectZcode, ensureVirtualDeviceMid, terminateZcode, zcodeRunning } from './zcodeLocal.js';
 import { liveToAccount as mirasimLiveAccount, switchTo as mirasimSwitchTo, currentMirasimUid, detectMirasim, terminateMirasim, mirasimRunning } from './mirasimLocal.js';
 import { liveToAccount as catpawLiveAccount, switchTo as catpawSwitchTo, currentCatpawToken, detectCatpaw, terminateCatpaw } from './catpawLocal.js';
-import { liveToAccount as traeLiveAccount, detectTrae, switchTo as traeSwitchTo, terminateTrae, snapshotLive as traeSnapshotLive } from './traeLocal.js';
+import { liveToAccount as traeLiveAccount, detectTrae, switchTo as traeSwitchTo, snapshotLive as traeSnapshotLive } from './traeLocal.js';
 import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFirst, proxyUrl, setProxyUrl, autoClaimEnabled, autoClaimUntil, setAutoClaimEnabled } from './zcodeClient.js';
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
 import { syncAccountsTo10r } from './tenrouterAccounts.js';
@@ -478,16 +478,11 @@ async function handleApi(req, res, url) {
         }
       } catch (e) {}
       try {
-        let closedClient = false;
-        if (body?.force === true) {
-          const t = terminateTrae();
-          closedClient = t.closed === true;
-          if (closedClient) logger.info('DAEMON', '已关闭 Trae 客户端（强制切换）');
-          else if (t.running) logger.warn('DAEMON', '未能完全结束 Trae 进程，继续强制切换');
-        }
+        // 退进程交给 switchTo：它要先确认目标有快照才会动手，避免「白关一次 Trae」
         const r = await traeSwitchTo(target, { force: body?.force === true });
+        if (r.closedClient) logger.info('DAEMON', '已关闭 Trae 客户端（强制切换）');
         logger.info('DAEMON', r.alreadyActive ? `Trae 当前已是 ${target.name || target.id}` : `Trae 已切换到 ${target.name || target.id}（重新打开客户端生效）`);
-        return json(res, 200, { ok: true, closedClient, ...r });
+        return json(res, 200, { ok: true, ...r });
       } catch (e) {
         return json(res, e.traeRunning ? 409 : 400, { error: e.message, code: e.traeRunning ? 'TRAE_RUNNING' : undefined });
       }

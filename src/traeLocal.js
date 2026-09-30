@@ -307,21 +307,24 @@ export async function switchTo(account, { force = false } = {}) {
   const cur = live.auth.userId;
   if (account.uid && cur && String(account.uid) === String(cur)) return { switched: false, alreadyActive: true };
 
+  // 先确认目标可切，再动进程：否则会出现「已经把 Trae 关掉、结果什么也没切」的白关
+  if (!hasSlot(account.uid)) {
+    throw new Error(`账号「${account.name || account.uid}」还没有登录态快照：请先在 Trae 里登录该账号，再回这里点一次「本机导入」`);
+  }
+
+  let closedClient = false;
   if (traeRunning()) {
     if (!force) {
       const e = new Error('Trae 客户端正在运行，请先退出后再切换（或强制切换，切换后自动重新拉起 Trae）');
       e.traeRunning = true;
       throw e;
     }
-    terminateTrae();
+    closedClient = terminateTrae().closed === true;
   }
 
   if (cur) saveSlot(cur);
-  if (!hasSlot(account.uid)) {
-    throw new Error(`账号「${account.name || account.uid}」还没有登录态快照：请先在 Trae 里登录该账号，再回这里点一次「本机导入」`);
-  }
   restoreSlot(account.uid);
-  return { switched: true, alreadyActive: false };
+  return { switched: true, alreadyActive: false, closedClient };
 }
 
 /** 供 daemon 在导入成功后立即建快照（否则新导入的账号没有可恢复的登录态） */

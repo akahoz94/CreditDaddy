@@ -85,6 +85,17 @@ test('Trae 切换：客户端在跑且未 force 时拒绝（否则 Trae 会把�
   _setRunningForTests(false);
 });
 
+test('Trae 切换：目标没快照时先报错、绝不先关进程（曾出现白关一次 Trae）', async () => {
+  _setRunningForTests(true);
+  const before = liveUid();
+  await assert.rejects(
+    () => switchTo({ uid: '5555555555555555', name: '没快照' }, { force: true }),
+    (e) => /还没有登录态快照/.test(e.message) && e.traeRunning === undefined,
+  );
+  assert.equal(liveUid(), before, '本机登录态不能被改动');
+  _setRunningForTests(false);
+});
+
 test('快照跳过 Chromium 缓存目录（本机实测缓存占 91/106 MB）', async () => {
   _setRunningForTests(false);
   const cache = path.join(process.env.TRAE_HOME, 'Partitions', 'trae-webview', 'Cache', 'f');
