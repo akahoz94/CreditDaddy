@@ -4,6 +4,14 @@
 
 ---
 
+## [1.2.2]
+
+### 🐛 修复
+
+- **ZCode 数据目录挪盘后一直读到陈旧凭据**（上游只找 `~/.zcode/v2/credentials.json`）。ZCode 支持把数据目录整体挪盘，真实位置写在 `~/.zcode/v2/setting.json` 的 `dataBaseDir` 里（口径对齐 pjpv/zcode-switch 的 `resolve_data_root`）。本机实测 `dataBaseDir = "G:Agent.zcode"`，活凭据在 `G:Agent.zcode.zcode2`，而 `C:UsersAdmin.zcode2credentials.json` 是挪盘前的死副本——于是面板永远显示旧账号（bigmodel / tztyljif），点切换还被误判成「已是当前账号」而什么都不做。现在 credentials / config / telemetry / provider_config 按 dataBaseDir 解析；setting.json 与加密密钥仍按 home 走（密钥由 os.homedir() 派生，不随数据目录挪动）。修好后立刻能读到真实登录的第二个账号。
+
+---
+
 ## [1.2.1]
 
 ### 🐛 修复
