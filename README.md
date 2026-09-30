@@ -14,7 +14,7 @@
 [![Node](https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License](https://img.shields.io/github/license/techysy/CreditDaddy?label=%E8%AE%B8%E5%8F%AF&color=f59e0b)](LICENSE)
 
-[下载](#下载) · [架构](#%EF%B8%8F-架构) · [功能](#功能) · [10Router 集成](#10router-集成) · [产品线说明](#产品线说明) · [快速开始](#快速开始) · [HTTP API](#本地-http-api) · [相关项目](#-相关项目) · [许可证](#-许可证)
+[下载](#下载) · [架构](#%EF%B8%8F-架构) · [功能](#功能) · [10Router 集成](#10router-集成) · [产品线说明](#产品线说明) · [快速开始](#快速开始) · [HTTP API](#本地-http-api) · [相关项目](#-相关项目) · [贡献者致谢](#-贡献者致谢) · [许可证](#-许可证)
 
 <img src="docs/screenshot-dashboard.png" width="860" alt="CreditDaddy 仪表盘">
 
@@ -263,6 +263,24 @@ npm test
 - [🚀 10Router](https://github.com/techysy/10router) — 本地智能 AI 路由网关与用量仪表盘（集成 CreditDaddy 额度总览只读接口与用量计价）
 - [🌉 zcode-feishu-bridge](https://github.com/techysy/zcode-feishu-bridge) — ZCode 飞书流式卡片桥接守护进程
 - [🕊️ feige-fry-cards](https://github.com/techysy/feige-fry-cards) — 跨 Agent 战报结果汇总与多渠道路由插件
+
+---
+
+## 👥 贡献者致谢
+
+<p>
+  <a href="https://github.com/techysy" title="techysy — 主要维护者"><img src="https://github.com/techysy.png?size=80" width="48" height="48" alt="techysy" /></a>
+  <a href="https://github.com/fioew" title="fioew — issue 反馈"><img src="https://github.com/fioew.png?size=80" width="48" height="48" alt="fioew" /></a>
+  <a href="https://github.com/iMissNan" title="iMissNan — issue 反馈"><img src="https://github.com/iMissNan.png?size=80" width="48" height="48" alt="iMissNan" /></a>
+  <a href="https://github.com/JinsFoni" title="JinsFoni — issue 反馈"><img src="https://github.com/JinsFoni.png?size=80" width="48" height="48" alt="JinsFoni" /></a>
+  <a href="https://github.com/zeonseoi" title="zeonseoi — issue 反馈"><img src="https://github.com/zeonseoi.png?size=80" width="48" height="48" alt="zeonseoi" /></a>
+  <a href="https://github.com/rua-aaa" title="rua-aaa — issue 反馈"><img src="https://github.com/rua-aaa.png?size=80" width="48" height="48" alt="rua-aaa" /></a>
+  <a href="https://github.com/Osinglehh" title="Osinglehh — issue 反馈"><img src="https://github.com/Osinglehh.png?size=80" width="48" height="48" alt="Osinglehh" /></a>
+  <a href="https://github.com/JacksonJiangxh" title="JacksonJiangxh — issue 反馈"><img src="https://github.com/JacksonJiangxh.png?size=80" width="48" height="48" alt="JacksonJiangxh" /></a>
+  <a href="https://github.com/juyou1" title="juyou1 — issue 反馈"><img src="https://github.com/juyou1.png?size=80" width="48" height="48" alt="juyou1" /></a>
+</p>
+
+<sub>名单由 issue 与 PR 的反馈者汇总，头像取自 GitHub 公开个人信息；若有遗漏请随时提 issue 补充。</sub>
 
 ---
 
