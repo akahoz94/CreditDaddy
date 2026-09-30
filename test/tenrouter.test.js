@@ -19,7 +19,12 @@ const hasSqlite = await us.sqliteAvailable();
 after(async () => {
   const { closeArchiveStream } = await import('../src/logger.js');
   closeArchiveStream();
-  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  await new Promise((r) => setTimeout(r, 250));
+  for (let i = 0; i < 30; i++) {
+    try { fs.rmSync(root, { recursive: true, force: true }); return; } catch { await new Promise((r) => setTimeout(r, 150)); }
+  }
+  // 删不掉不判失败（Windows 上句柄释放慢），打出残留内容便于排查
+  try { console.error('[cleanup] 临时目录未能删除，残留：' + fs.readdirSync(path.join(root, 'data', 'logs')).join(', ')); } catch {}
 });
 
 function mockFetch(handler) {
