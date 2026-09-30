@@ -139,10 +139,22 @@ function isNewerVersion(next, cur) {
  * 只依赖 GitHub API 与 release 资产本身，不依赖 electron-updater 的 latest.yml。
  * 只认最新正式 release（prerelease / draft 不参与），安装包取 CreditDaddy-Setup-*.exe。
  */
-async function fetchLatestReleaseFromGitHub() {
+/**
+ * 更新源仓库 owner/repo。以 electron-builder 的 build.publish 为准，项目主页只作兜底：
+ * homepage 是「项目归属」展示用的，fork 会保留原作者，而 publish 才是这个包真正该去找更新的地方。
+ * 两者不一致时若都取 homepage，fork 构建出的程序会去下载上游那个不含 fork 改动的版本。
+ * 对上游自身两者相同，所以这里对原作者是无害的。
+ */
+function updateRepoSlug() {
+  const pub = (require('./package.json').build || {}).publish || {};
+  if (pub.provider === 'github' && pub.owner && pub.repo) return `${pub.owner}/${pub.repo}`;
   const m = /^https:\/\/github\.com\/([^/]+)\/([^/#?]+)/.exec(daemonInfo.homepage || DEFAULT_HOMEPAGE);
-  if (!m) throw new Error('无法从项目主页识别 GitHub 仓库');
-  const repo = `${m[1]}/${m[2].replace(/\.git$/, '')}`;
+  return m ? `${m[1]}/${m[2].replace(/\.git$/, '')}` : '';
+}
+
+async function fetchLatestReleaseFromGitHub() {
+  const repo = updateRepoSlug();
+  if (!repo) throw new Error('无法识别要检查更新的 GitHub 仓库');
   const res = await net.fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
     headers: { Accept: 'application/vnd.github+json' },
   });

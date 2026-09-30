@@ -1341,7 +1341,7 @@ function mirasimClientChip(s) {
 // Trae 客户端状态芯片
 function traeClientChip(s) {
   const c = s.traeClient || {};
-  if (!c.installed) return ' <span class="dim">客户端：未安装（本机导入需要 Windows / macOS 的 Trae 客户端）</span>';
+  if (!c.installed) return ' <span class="dim">客户端：未安装（本机导入与切换需要 Windows 版 Trae 客户端）</span>';
   const canOpen = window.creditdaddy && typeof window.creditdaddy.openTraeClient === 'function';
   return ' <span class="dim">客户端：' + (c.running ? '运行中' : '未运行') + (c.signedIn ? '' : ' · 未登录') + '</span>'
     + (canOpen ? ' <button class="btn" id="btn-traeopen" style="margin-left:4px" title="打开本机 Trae 客户端">打开客户端</button>' : '');
