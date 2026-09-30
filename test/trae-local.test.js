@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { tcDecrypt, uidFromJwt } from '../src/traeLocal.js';
-import { traeDevice } from '../src/traeClient.js';
+import { traeDevice, DEVICE_TAKEN } from '../src/traeClient.js';
 
 const WOE = [82, 9, 106, 213, 48, 54, 165, 56, 191, 64, 163, 158, 129, 243, 215, 251, 124, 227, 57, 130, 155, 47, 255, 135, 52, 142, 67, 68, 196, 222, 233, 203, 84, 123, 148, 50, 166, 194, 35, 61, 238, 76, 149, 11, 66, 250, 195, 78, 8, 46, 161, 102, 40, 217, 36, 178, 118, 91, 162, 73, 109, 139, 209, 37];
 const VOE = [31, 221, 168, 51, 136, 7, 199, 49, 177, 18, 16, 89, 39, 128, 236, 95, 96, 81, 127, 169, 25, 181, 74, 13, 45, 229, 122, 159, 147, 201, 156, 239, 160, 224, 59, 77, 174, 42, 245, 176, 200, 235, 187, 60, 131, 83, 153, 97, 23, 43, 4, 126, 186, 119, 214, 38, 225, 105, 20, 99, 85, 33, 12, 125];
@@ -69,4 +69,13 @@ test('uidFromJwt：取 payload.data.id，非 JWT 输入返回 null', () => {
   assert.equal(uidFromJwt(jwt('4034551761602176')), '4034551761602176');
   assert.equal(uidFromJwt('Cloud-IDE-JWT garbage'), null);
   assert.equal(uidFromJwt(''), null);
+});
+
+// 真机抓到的服务端文案：账号没签但本机设备名额已被其他账号用掉。
+// 判成 failed 会让账号卡标红，并按面板规则连带隐藏「切换账号」按钮。
+test('Trae 签到：「本机今日已领」是 limited 而不是 failed', () => {
+  assert.ok(DEVICE_TAKEN.test('当前设备今日已经签到，请明日再来哦～'));
+  assert.ok(DEVICE_TAKEN.test('该设备已经签到'));
+  assert.ok(!DEVICE_TAKEN.test('token 已过期'), '真失败不该被归成本机已领');
+  assert.ok(!DEVICE_TAKEN.test('系统繁忙'), '服务端抖动不该被归成本机已领');
 });

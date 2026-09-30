@@ -201,6 +201,14 @@ async function fetchTraePlan(account) {
 }
 
 /**
+ * Trae 签到是两层限制：账号层（status 的 checked_in）与设备层（同一台机器每天一次）。
+ * 账号没签但设备名额已被本机其他账号用掉时，claim 会回「当前设备今日已经签到」——
+ * 这不是失败，归到 limited（面板显示中性的「本机已领」）；判成 failed 会让账号卡标红，
+ * 还会连带把「切换账号」按钮挤掉（面板规则：cls === 'fail' 不渲染按钮）。
+ */
+export const DEVICE_TAKEN = /当前设备今日已经签到|设备.*(已|已经)签|明日再来/;
+
+/**
  * 每日签到：先查 status，已签则报 already，未签才 claim。
  * 返回 CreditDaddy 的签到契约 { status, claimedAmount?, message?, uid? }。
  */
@@ -223,12 +231,12 @@ export async function checkinTrae(account, ctx = {}) {
 
   const c = await post(CLAIM_URL, account);
   if (c.code !== 0) {
+    if (c.code === 9074 || DEVICE_TAKEN.test(c.message)) {
+      ctx.log?.(`Trae 本机今日已领过：${c.message}`);
+      return { status: 'limited', message: c.message || '本机今日已领取过', uid };
+    }
     ctx.log?.(`Trae 领取失败：${c.message || `code ${c.code}`}`);
-    return {
-      status: c.code === 9074 ? 'limited' : 'failed',
-      message: c.message || `code ${c.code}`,
-      uid,
-    };
+    return { status: 'failed', message: c.message || `code ${c.code}`, uid };
   }
   const claimed = Number(findField(c.body, 'credits')) || 0;
   return { status: 'checked-in', claimedAmount: claimed, message: claimed ? `签到成功，+${claimed} 积分` : '签到成功', uid };
