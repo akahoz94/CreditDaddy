@@ -77,7 +77,9 @@ jobs:
           set -euo pipefail
           mkdir -p release-files-mac
           cp desktop/dist/*.dmg desktop/dist/*.zip release-files-mac/
-          ( cd release-files-mac && for f in *; do mv "$f" "mac-$f"; done )
+          # electron-updater 的元数据必须保持原文件名，不能加 mac- 前缀
+          cp desktop/dist/latest-mac.yml release-files-mac/
+          ( cd release-files-mac && for f in *.dmg *.zip; do mv "$f" "mac-$f"; done )
           ( cd release-files-mac && shasum -a 256 * > SHA256SUMS-mac.txt )
           cat release-files-mac/SHA256SUMS-mac.txt
 
@@ -133,6 +135,8 @@ jobs:
           mkdir -p release-files
           cp desktop/dist/CreditDaddy-Setup-*.exe release-files/
           cp desktop/dist/CreditDaddy-Portable-*.exe release-files/
+          # electron-updater 按 latest.yml 发现新版本（NSIS 自更新；Portable 不参与）
+          cp desktop/dist/latest.yml release-files/
           ( cd release-files && sha256sum *.exe > SHA256SUMS-desktop.txt )
           cat release-files/SHA256SUMS-desktop.txt
 
@@ -142,10 +146,11 @@ jobs:
         run: |
           set -euo pipefail
           ls -lh release-files/
-          N=$(ls release-files/*.exe release-files/SHA256SUMS-desktop.txt 2>/dev/null | wc -l)
-          [ "$N" -ge 3 ] || { echo "ERROR: expected >=3 files, found $N"; exit 1; }
+          N=$(ls release-files/*.exe release-files/*.yml release-files/SHA256SUMS-desktop.txt 2>/dev/null | wc -l)
+          [ "$N" -ge 4 ] || { echo "ERROR: expected >=4 files (2 exe + latest.yml + checksums), found $N"; exit 1; }
           gh release upload "${{ github.ref_name }}" \
             release-files/*.exe \
+            release-files/latest.yml \
             release-files/SHA256SUMS-desktop.txt \
             --clobber --repo "$GITHUB_REPOSITORY"
         env:

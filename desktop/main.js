@@ -11,6 +11,10 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 
+// 自动更新（electron-updater + GitHub Releases）。开发环境不装这个依赖也能跑，缺失时静默跳过
+let autoUpdater = null;
+try { ({ autoUpdater } = require('electron-updater')); } catch {}
+
 const PORT = 47860;
 const START_HIDDEN = process.argv.includes('--hidden');
 
@@ -23,6 +27,7 @@ let hideHintShown = false;
 let lastSummary = '';
 const DEFAULT_HOMEPAGE = 'https://github.com/techysy/CreditDaddy';
 let daemonInfo = { version: app.getVersion(), dataDir: '', homepage: DEFAULT_HOMEPAGE };
+let updateState = { available: null, downloaded: null };   // available/downloaded: 版本号字符串
 
 const serverRoot = app.isPackaged
   ? path.join(process.resourcesPath, 'creditdaddy')
@@ -70,7 +75,74 @@ async function boot() {
     return;
   }
   refreshTrayMenu();
+  setupAutoUpdate();
   if (!START_HIDDEN) createWindow();
+}
+
+/**
+ * 自动更新：启动 30 秒后和每 6 小时查一次 GitHub Releases，后台静默下载，
+ * 退出时自动安装（autoInstallOnAppQuit）；托盘菜单可手动检查 / 立即重启更新。
+ * Portable 版和开发模式没有自更新能力，直接跳过。
+ */
+function setupAutoUpdate() {
+  if (!autoUpdater || !app.isPackaged) return;
+  if (process.platform !== 'win32') return;          // macOS 构建未签名，Squirrel 装不上，先只做 Win 自更新
+  if (process.env.PORTABLE_EXECUTABLE_DIR) return;   // portable 解压自包含，覆盖式更新会丢用户数据
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', (info) => { updateState.available = info.version; refreshTrayMenu(); });
+  autoUpdater.on('update-not-available', () => { updateState.available = null; refreshTrayMenu(); });
+  autoUpdater.on('update-downloaded', (info) => {
+    updateState.downloaded = info.version;
+    refreshTrayMenu();
+    try {
+      const n = new Notification({
+        title: 'CreditDaddy 新版本已就绪',
+        body: `v${info.version} 已在后台下载完成，退出 CreditDaddy 时自动安装（也可在托盘菜单里立即重启更新）。`,
+        silent: true,
+      });
+      n.on('click', () => showWin());
+      n.show();
+    } catch {}
+  });
+  autoUpdater.on('error', () => {});   // 更新失败不影响主流程，托盘手动检查时会给出具体报错
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  setTimeout(check, 30_000).unref?.();
+  setInterval(check, 6 * 60 * 60 * 1000).unref?.();
+}
+
+async function checkForUpdateInteractive() {
+  if (!autoUpdater || !app.isPackaged || process.platform !== 'win32' || process.env.PORTABLE_EXECUTABLE_DIR) {
+    dialog.showMessageBox({ type: 'info', message: '当前环境不支持应用内自动更新', detail: '开发模式 / Portable / 未签名的 macOS 版请从 GitHub Releases 手动下载新版本。', buttons: ['打开 Releases 页面', '取消'], defaultId: 0, cancelId: 1 })
+      .then((r) => { if (r.response === 0) shell.openExternal(daemonInfo.homepage + '/releases'); });
+    return;
+  }
+  if (updateState.downloaded) {
+    const r = await dialog.showMessageBox({
+      type: 'info',
+      message: `新版本 v${updateState.downloaded} 已下载完成`,
+      detail: '重启 CreditDaddy 即完成更新。',
+      buttons: ['立即重启更新', '稍后（退出时也会自动安装）'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (r.response === 0) { quitting = true; autoUpdater.quitAndInstall(false, true); }
+    return;
+  }
+  try {
+    refreshTrayMenu();
+    const result = await autoUpdater.checkForUpdates();
+    const v = result && result.updateInfo && result.updateInfo.version;
+    if (updateState.downloaded) {
+      await checkForUpdateInteractive();
+    } else if (v && v !== app.getVersion()) {
+      dialog.showMessageBox({ type: 'info', message: `发现新版本 v${v}`, detail: '正在后台下载，完成后会通知你；退出应用时自动安装。' });
+    } else {
+      dialog.showMessageBox({ type: 'info', message: `已是最新版本（v${app.getVersion()}）` });
+    }
+  } catch (e) {
+    dialog.showMessageBox({ type: 'warning', message: '检查更新失败', detail: String((e && e.message) || e) });
+  }
 }
 
 /**
@@ -389,6 +461,7 @@ function refreshTrayMenu() {
     { label: 'CreditDaddy v' + daemonInfo.version, enabled: false },
     { label: '面板 127.0.0.1:' + boundPort, enabled: false },
     ...(lastSummary ? [{ label: lastSummary.slice(0, 60), enabled: false }] : []),
+    ...(updateState.downloaded ? [{ label: '新版本 v' + updateState.downloaded + ' 已就绪，重启即更新', enabled: false }] : []),
     { type: 'separator' },
     { label: '打开面板', click: () => showWin() },
     { label: '立即领取全部账号', click: () => { checkinNow(); } },
@@ -397,6 +470,9 @@ function refreshTrayMenu() {
     { label: '打开数据目录', enabled: Boolean(daemonInfo.dataDir), click: () => shell.openPath(daemonInfo.dataDir) },
     { label: '项目主页（GitHub）', click: () => shell.openExternal(daemonInfo.homepage) },
     { type: 'separator' },
+    ...(autoUpdater
+      ? [{ label: updateState.downloaded ? '重启并安装更新' : '检查更新…', click: () => { checkForUpdateInteractive(); } }]
+      : []),
     { label: '退出 CreditDaddy', click: () => { quitting = true; app.quit(); } },
   ]));
 }
