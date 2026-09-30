@@ -8,6 +8,8 @@
 
 ### ✨ 新功能
 
+- 同步账号到 10Router 时随加密通道带上 Qoder 网页会话（providerSpecificData.creditDaddyWebSession，含 userId 归属校验）：10Router 的 Qoder 额度从「campaign 近似推算逐包」升级为网页端真实逐资源包明细（每包精确 used / 到期时间）；无会话时 10Router 维持原近似，行为不变。回导入 CreditDaddy 时该会话自动恢复到 meta，双向闭环
+
 - Qoder 逐资源包用量明细：网页端「用量明细」接口（`/api/v2/me/usages/big_model_credits`）上线后，桌面版登录窗口关闭前自动抢救 qoder.cn / qoder.com 的会话 Cookie（httpOnly，只有 Electron session API 能读），按响应里的 `user_id` 归到对应账号；额度查询把「附加额度」聚合值展开为每个资源包一条（名称按来源区分 获赠 / 购买 / 组织，各自到期时间进进度条与「N 于 X 到期」提示）。会话失效自动清除并回落聚合数据；无会话（fnOS / 未走过登录窗口）行为不变
 
 ---

@@ -87,7 +87,15 @@ export function buildExportPayload(accounts, { provider, product } = {}) {
       refreshToken: a.refreshToken || null,
       expiresAt: a.expiresAt || null,
       createdAt: a.createdAt,
-      providerSpecificData: { authMethod: a.token.startsWith('pt-') ? 'pat' : 'device', userId: a.uid || null },
+      providerSpecificData: {
+        authMethod: a.token.startsWith('pt-') ? 'pat' : 'device',
+        userId: a.uid || null,
+        // Qoder 网页会话随账号一起同步：10Router 的逐资源包明细接口只认这个 Cookie
+        // （openapi 只有聚合值）。userId 供接收方核对会话归属，防止张冠李戴。
+        ...(a.meta?.qoderWebSession?.cookie && String(a.provider).startsWith('qoder')
+          ? { creditDaddyWebSession: { cookie: a.meta.qoderWebSession.cookie, capturedAt: a.meta.qoderWebSession.capturedAt || null, userId: a.uid || null } }
+          : {}),
+      },
       ...(a.meta && Object.keys(a.meta).length ? { meta: a.meta } : {}),
     })),
   };
@@ -130,6 +138,12 @@ export function parseImport(data, { password } = {}) {
     if (!provider || typeof token !== 'string' || !token.trim()) { skipped++; continue; }
     const psd = item.providerSpecificData || {};
     const email = typeof item.email === 'string' && item.email.includes('@') && !/^qoder(-cn)?-user-/.test(item.email) ? item.email : null;
+    // 10Router 侧保留的网页会话（psd.creditDaddyWebSession）回导入时捡回 meta，双向闭环
+    const webSession = psd.creditDaddyWebSession && typeof psd.creditDaddyWebSession === 'object'
+      && typeof psd.creditDaddyWebSession.cookie === 'string' && psd.creditDaddyWebSession.cookie
+      ? { cookie: psd.creditDaddyWebSession.cookie, capturedAt: psd.creditDaddyWebSession.capturedAt || null } : null;
+    const meta = { ...(item.meta && typeof item.meta === 'object' ? item.meta : {}) };
+    if (webSession && !meta.qoderWebSession) meta.qoderWebSession = webSession;
     accounts.push({
       provider,
       token,
@@ -139,7 +153,7 @@ export function parseImport(data, { password } = {}) {
       refreshToken: item.refreshToken || item.refresh_token || null,
       expiresAt: item.expiresAt ?? (item.expiresIn ? Date.now() + Number(item.expiresIn) * 1000 : null),
       source: source === '10router' ? '10router' : 'import',
-      ...(item.meta && typeof item.meta === 'object' ? { meta: item.meta } : {}),
+      ...(Object.keys(meta).length ? { meta } : {}),
     });
   }
   return { accounts, skipped, source };

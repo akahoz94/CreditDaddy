@@ -78,6 +78,24 @@ test('载荷构建不含 id，兼容新旧字段', () => {
   assert.equal(payload.accounts[0].providerSpecificData.userId, 'u-1');
 });
 
+test('Qoder 网页会话随导出进 providerSpecificData，回导入恢复进 meta', () => {
+  const a = store.normalizeAccountInput({ provider: 'qoder-cn', token: 'dt-web-sync', uid: 'u-web' });
+  a.meta = { qoderWebSession: { cookie: 'session=abc; x=1', capturedAt: '2026-09-30T11:47:56.904Z' } };
+  const payload = transfer.buildExportPayload([a]);
+  const psd = payload.accounts[0].providerSpecificData;
+  assert.equal(psd.creditDaddyWebSession.cookie, 'session=abc; x=1');
+  assert.equal(psd.creditDaddyWebSession.userId, 'u-web');
+  // 往返：parseImport 把 psd 里的会话捡回 meta.qoderWebSession
+  const parsed = transfer.parseImport(payload);
+  assert.equal(parsed.accounts[0].meta.qoderWebSession.cookie, 'session=abc; x=1');
+  // 10router 形态（无 meta 字段，只有 psd）也能恢复
+  const as10r = { format: 'x', provider: 'qoder-cn', accounts: [{ accessToken: 'dt-web-sync', providerSpecificData: psd }] };
+  assert.equal(transfer.parseImport(as10r).accounts[0].meta.qoderWebSession.cookie, 'session=abc; x=1');
+  // 非 qoder 产品不带会话；无会话的 qoder 账号 psd 里没有该键
+  const noSession = store.normalizeAccountInput({ provider: 'qoder', token: 'dt-none', uid: 'u-n' });
+  assert.equal(transfer.buildExportPayload([noSession]).accounts[0].providerSpecificData.creditDaddyWebSession, undefined);
+});
+
 test('加密导出往返（10router-oauth-secure-v1）', () => {
   const a = store.normalizeAccountInput({ provider: 'qoder-cn', token: 'dt-secret-token-xyz', refreshToken: 'rt' });
   const blob = JSON.parse(JSON.stringify(transfer.exportAccounts([a], { password: 'pass1234' })));
