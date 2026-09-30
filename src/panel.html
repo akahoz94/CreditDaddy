@@ -1612,74 +1612,51 @@ function trVendorCardHtml(g) {
   const splitOf = items.map((x) => ({ x, s: splitQuotas(x) }));
   // Total Points / 含 Cycle|Capacity 的包是全包汇总：连接级聚合跳过它们，避免与子包重复计数
   const isAgg = (q) => isAggregatePack(q && q.name);
-  const primaries = splitOf.filter(({ s }) => s.primary && !isAgg(s.primary)).map(({ s }) => s.primary);
-  let primary = null;
-  if (primaries.length) {
-    const name = primaries[0].name;
-    const same = primaries.filter((p) => p.name === name);
-    const total = same.reduce((n, p) => n + (p.total > 0 ? p.total : 0), 0);
-    // 源数据本身是百分比口径（percentScale / remainingPercentage）→ 聚合也用 %（反重力这类窗口间平等）
-    const isPct = same[0].percentScale || Number.isFinite(same[0].remainingPercentage) || !(total > 0);
-    if (isPct) {
-      // 限时百分比窗口（如 Claude 5h）：跨连接取平均百分比，而不是加总
-      const pcts = same.map((p) => quotaPct(p)).filter((x) => x !== null);
-      primary = {
-        name,
-        total: 0,
-        remaining: 0,
-        used: 0,
-        unit: '',
-        percentScale: true,
-        remainingPercentage: pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null,
-        recurring: same[0].recurring,
-        resetAt: same.map((p) => p.resetAt).filter(Boolean).sort()[0] || null,
-      };
-    } else {
-      primary = {
-        name,
-        total,
-        remaining: same.reduce((n, p) => n + quotaRemaining(p), 0),
-        used: same.reduce((n, p) => n + (p.used || 0), 0),
-        unit: same[0].unit || '',
-        percentScale: same[0].percentScale === true,
-        recurring: same[0].recurring,
-        resetAt: same.map((p) => p.resetAt).filter(Boolean).sort()[0] || null,
-      };
-    }
+  // 非包行按「名称」归并求和，不论它在该连接卡里扮演主额度还是窗口：各连接主行
+  // 名称不一致时（Qoder CN 有的账号有 Plan Credits 行、有的没有），只按第一行的
+  // 名字取主行会把其余连接的主行静默丢掉。
+  // detailOnly / summarizesDetail：10Router 新版把汇总行拆出的逐包明细行（每资源包
+  // 一条）——父行已含其数值，供应商级聚合跳过，避免重复计数。
+  const isDetail = (q) => q && q.detailOnly === true;
+  let headlineName = null;
+  for (const { s } of splitOf) {
+    if (s.primary && !isAgg(s.primary) && !isDetail(s.primary)) { headlineName = s.primary.name; break; }
   }
-
-  // 周期窗口：同名加总；本身是百分比口径的行（percentScale / remainingPercentage）按 % 均值聚合
-  const winMap = new Map();
+  const rowMap = new Map();
   const packs = [];
   for (const { s } of splitOf) {
-    for (const q of s.windows.filter((x) => !isAgg(x))) {
-      if (!winMap.has(q.name)) winMap.set(q.name, { name: q.name, total: 0, rem: 0, anyTotal: false, pctScale: false, resetAt: null, pcts: [] });
-      const w = winMap.get(q.name);
+    for (const q of [s.primary, ...s.windows]) {
+      if (!q || isAgg(q) || isDetail(q)) continue;
+      if (!rowMap.has(q.name)) rowMap.set(q.name, { name: q.name, total: 0, rem: 0, anyTotal: false, pctScale: false, resetAt: null, pcts: [], unit: '' });
+      const w = rowMap.get(q.name);
       const isPctRow = q.percentScale || Number.isFinite(q.remainingPercentage);
       if (isPctRow) w.pctScale = true;
       const pct = quotaPct(q);
       if (pct !== null) w.pcts.push(pct);
-      if (!isPctRow && q.total > 0) { w.anyTotal = true; w.total += q.total; w.rem += quotaRemaining(q); }
+      if (!isPctRow && q.total > 0) { w.anyTotal = true; w.total += q.total; w.rem += quotaRemaining(q); if (!w.unit) w.unit = q.unit || ''; }
       if (q.resetAt && (!w.resetAt || String(q.resetAt) < String(w.resetAt))) w.resetAt = q.resetAt;
     }
-    packs.push(...s.packs.filter((x) => !isAgg(x)));
+    packs.push(...s.packs.filter((x) => !isAgg(x)));   // 明细行照常进「积分包×N」简讯：只作计数与剩余提示，不参与行求和
   }
-  const wins = [...winMap.values()];
-  const alivePacks = packs.filter((q) => quotaRemaining(q) > 0);
-  const packRem = alivePacks.reduce((n, q) => n + quotaRemaining(q), 0);
-
-  // 周 / 月度等窗口额度也给进度条：百分比口径显示 % 均值；固定额度加总数字
+  // 百分比口径（限时窗口）→ % 均值；固定额度 → 数字加总；无总量 → % 兜底
   const avgPct = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-  const winRows = wins.map((w) => trRow(w.pctScale
+  const toRowObj = (w) => (w.pctScale
     ? { name: w.name, total: 0, remainingPercentage: avgPct(w.pcts), percentScale: true, resetAt: w.resetAt, recurring: true }
     : (w.anyTotal
-      ? { name: w.name, total: w.total, remaining: w.rem, used: w.total - w.rem, unit: '', percentScale: false, resetAt: w.resetAt, recurring: true }
-      : { name: w.name, total: 0, remainingPercentage: avgPct(w.pcts), percentScale: true, resetAt: w.resetAt, recurring: true }))).join('');
+      ? { name: w.name, total: w.total, remaining: w.rem, used: w.total - w.rem, unit: w.unit, percentScale: false, resetAt: w.resetAt, recurring: true }
+      : { name: w.name, total: 0, remainingPercentage: avgPct(w.pcts), percentScale: true, resetAt: w.resetAt, recurring: true }));
+  const headline = headlineName ? rowMap.get(headlineName) : null;
+  if (headline) rowMap.delete(headlineName);
+  const primary = headline ? toRowObj(headline) : null;
+  const others = [...rowMap.values()];
+  const winRows = others.map((w) => trRow(toRowObj(w))).join('');
 
+  const alivePacks = packs.filter((q) => quotaRemaining(q) > 0);
+  const packRem = alivePacks.reduce((n, q) => n + quotaRemaining(q), 0);
   const briefs = [];
   if (alivePacks.length) briefs.push('积分包×' + alivePacks.length + ' 剩 ' + fmtNum(packRem));
   else if (packs.length) briefs.push('积分包已用完');
-  const hasQuotas = Boolean(primary || wins.length || packs.length);
+  const hasQuotas = Boolean(primary || others.length || packs.length);
   let quotaHtml;
   if (errs === items.length) {
     quotaHtml = '<div class="msg err">全部连接查询失败</div>';
