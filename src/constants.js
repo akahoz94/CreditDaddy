@@ -13,6 +13,10 @@ import { readFileSync } from 'node:fs';
 export const OPENAPI_BASE = 'https://openapi.qoder.sh';
 export const CN_OPENAPI_BASE = 'https://openapi.qoder.com.cn';
 
+// 网页端（账号设置 → 用量明细）同源 API：逐资源包明细只在这里提供，且只认浏览器登录后的会话 Cookie。
+export const WEB_BASE = 'https://qoder.com';
+export const CN_WEB_BASE = 'https://qoder.cn';
+
 export const LOGIN_URL = 'https://qoder.com/device/selectAccounts';
 export const CN_LOGIN_URL = 'https://qoder.cn/device/selectAccounts';
 
@@ -23,6 +27,9 @@ export const CAMPAIGN_CLAIM_PATH = (id) => `/sash/api/v1/me/campaigns/${encodeUR
 // 账号信息与配额
 export const USERINFO_PATH = '/api/v1/userinfo';
 export const QUOTA_USAGE_PATH = '/api/v2/quota/usage';
+// 网页端逐资源包用量明细（plan / 个人资源包 / 组织资源包，含每包到期时间）。
+// 仅接受浏览器登录的会话 Cookie（dt- / jt- token 一律 401），见 qoderClient.fetchUsageDetail。
+export const WEB_USAGE_PATH = '/api/v2/me/usages/big_model_credits';
 
 // PAT (pt-...) → 短期 job token (jt-...) 兑换（普通 JSON POST，无需 COSY 签名）
 export const JOB_TOKEN_EXCHANGE_PATH = '/api/v1/jobToken/exchange';
@@ -49,6 +56,11 @@ export const productOf = (provider) => {
 };
 /** provider 是否国内版 */
 export const isCnProvider = (provider) => provider === 'qoder-cn' || provider === 'workbuddy';
+
+/** Qoder 网页端同源 API 的 host（用量明细逐资源包接口在这里，只认浏览器会话 Cookie） */
+export function webBase(provider) {
+  return provider === 'qoder-cn' ? CN_WEB_BASE : WEB_BASE;
+}
 
 /** 签到请求头（源自 10router qoderCheckin.js，clientType=10 与官方客户端一致） */
 export function buildQoderHeaders(token) {

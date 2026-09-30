@@ -289,7 +289,8 @@ async function handleApi(req, res, url) {
     const account = accounts.find((a) => a.id === quotaMatch[1]);
     if (!account) return json(res, 404, { error: '账号不存在' });
     try {
-      const ctx = refreshContext(account, (m) => logger.info('QUOTA', `${account.name || account.id}：${m}`));
+      const log = (m) => logger.info('QUOTA', `${account.name || account.id}：${m}`);
+      const ctx = { log, ...refreshContext(account, log) };
       return json(res, 200, { quota: await productImpl(account.provider).quota(account, ctx) });
     } catch (e) {
       return json(res, 502, { error: e.message });
@@ -487,6 +488,36 @@ async function handleApi(req, res, url) {
     try {
       return json(res, 200, await pollDeviceFlow(body.sessionId));
     } catch (e) { return json(res, 500, { error: e.message }); }
+  }
+
+  // ── Qoder 网页会话（桌面版登录窗口关闭前抓取，用于逐资源包用量明细） ──
+  // Cookie 先探测归属（响应里的 user_id），只写到同 uid 的 qoder 账号上；探测失败视为会话无效。
+  if (p === '/api/auth/qoder-web-session' && method === 'POST') {
+    const body = await readBody(req).catch(() => ({}));
+    const cookie = String(body?.cookie || '').trim();
+    const kind = body?.kind === 'qoder-cn' ? 'qoder-cn' : 'qoder';
+    if (!cookie || cookie.length > 16384) return json(res, 400, { error: '缺少 cookie' });
+    const { probeWebSession } = await import('./qoderClient.js');
+    const probe = await probeWebSession(kind, cookie);
+    if (!probe?.user_id) return json(res, 400, { error: '网页会话无效（探测接口未通过）' });
+    const now = new Date().toISOString();
+    const bound = await withAccounts((list) => {
+      const hits = list.filter((a) => a.provider === kind && a.uid === probe.user_id);
+      for (const a of hits) {
+        a.meta = { ...(a.meta || {}), qoderWebSession: { cookie, capturedAt: now } };
+        a.updatedAt = now;
+      }
+      return hits.length;
+    });
+    if (!bound) {
+      // 登录窗口可能先于设备码入库关闭：暂存待绑定会话，addAccount 补全 uid 后自动挂上
+      const pending = (await loadSettings()).pendingQoderWebSessions || {};
+      await saveSettings({ pendingQoderWebSessions: { ...pending, [probe.user_id]: { kind, cookie, capturedAt: now } } });
+      logger.info('DAEMON', `收到 Qoder 网页会话（uid ${probe.user_id.slice(0, 8)}…），暂无匹配账号，已暂存待绑定`);
+    } else {
+      logger.info('DAEMON', `已绑定 Qoder 网页会话到 ${bound} 个账号（逐资源包明细可用）`);
+    }
+    return json(res, 200, { ok: true, bound });
   }
 
   // ── 本机检测 / 凭据扫描 ──

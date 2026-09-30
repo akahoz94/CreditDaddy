@@ -9,7 +9,7 @@
  */
 
 import { productOf } from './constants.js';
-import { checkinOne as checkinQoder, fetchQuotaUsage, fetchUserinfo } from './qoderClient.js';
+import { checkinOne as checkinQoder, fetchQuotaUsage, fetchUserinfo, fetchUsageDetail } from './qoderClient.js';
 import { checkinWorkbuddy, checkinWorkbuddyIntl, fetchWorkbuddyQuota, inspectToken } from './workbuddyClient.js';
 import { fetchZcodeQuota } from './zcodeClient.js';
 import { fetchMirasimQuota, fetchMirasimProfile } from './mirasimClient.js';
@@ -22,11 +22,11 @@ export function displayNameFrom(ui) {
   return pick || null;
 }
 
-/** Qoder /api/v2/quota/usage → 统一积分结构 */
-export function normalizeQoderQuota(q) {
+/** Qoder /api/v2/quota/usage → 统一积分结构；detail 为网页端逐资源包明细（可选，已按 uid 校验） */
+export function normalizeQoderQuota(q, detail = null) {
   const names = [['userQuota', '套餐额度', true], ['addOnQuota', '附加额度', false], ['orgResourcePackage', '组织资源包', false]];
-  const expiresAt = Number(q?.expiresAt) > 0 && Number(q.expiresAt) < 253400000000000 ? new Date(Number(q.expiresAt)).toISOString() : null;
-  const parts = names
+  const fmtExpiry = (v) => (Number(v) > 0 && Number(v) < 253400000000000 ? new Date(Number(v)).toISOString() : null);
+  let parts = names
     .map(([k, name, recurring]) => ({ x: q?.[k], name, recurring }))
     .filter(({ x }) => x && Number(x.total) > 0)
     .map(({ x, name, recurring }) => ({
@@ -34,17 +34,87 @@ export function normalizeQoderQuota(q) {
       total: Number(x.total) || 0,
       used: Number(x.used) || 0,
       remaining: Number(x.remaining) || 0,
-      expiresAt,
+      expiresAt: fmtExpiry(q?.expiresAt),
     }));
+  // 网页端明细可用时按「每个资源包一条」展开（含各自到期时间），比聚合值更精确
+  const detailParts = detail ? detailQuotaParts(detail, fmtExpiry) : null;
+  if (detailParts) parts = detailParts;
   const sum = (k) => Math.round(parts.reduce((s, p) => s + p[k], 0) * 100) / 100;
   return { total: sum('total'), used: sum('used'), remaining: sum('remaining'), parts, exceeded: Boolean(q?.isQuotaExceeded) };
+}
+
+/** 网页端用量明细的分组 → 统一 parts（组内为空 / 全 0 时返回 null 让调用方回落聚合数据） */
+const DETAIL_SOURCE_NAME = {
+  PLAN: '套餐额度',
+  RESOURCE_PACKAGE_SOURCE_BONUS: '获赠资源包',
+  RESOURCE_PACKAGE_SOURCE_PURCHASE: '购买资源包',
+  RESOURCE_PACKAGE_SOURCE_ORG: '组织资源包',
+};
+function detailQuotaParts(detail, fmtExpiry) {
+  const groups = [['plan_quota', '套餐额度', true], ['resource_package_quota', '资源包', false], ['dedicated_resource_package_quota', '组织资源包', false]];
+  const parts = [];
+  for (const [key, fallbackName, recurring] of groups) {
+    const rows = detail?.[key]?.quota_detail;
+    if (!Array.isArray(rows)) continue;
+    for (const r of rows) {
+      const total = Number(r?.limit_value) || 0;
+      if (total <= 0) continue;
+      parts.push({
+        name: DETAIL_SOURCE_NAME[r?.source] || fallbackName,
+        recurring,
+        total,
+        used: Number(r?.used_value) || 0,
+        remaining: Number(r?.remaining_value) || 0,
+        expiresAt: fmtExpiry(r?.expires_at),
+      });
+    }
+  }
+  return parts.length ? parts : null;
+}
+
+/**
+ * 网页端逐资源包明细（best-effort）：无会话 Cookie 返回 null；
+ * 会话失效（401/403）时清除 Cookie 并回调 ctx.onWebSessionExpired 提示重新登录，同样回落。
+ * 明细里的 user_id 与账号 uid 不一致时丢弃（防止把别人的资源包显示到这个账号上）。
+ */
+async function qoderWebDetail(account, ctx = {}) {
+  try {
+    const d = await fetchUsageDetail(account);
+    if (!d) return null;
+    if (account.uid && d.user_id && d.user_id !== account.uid) {
+      ctx.log?.('网页会话与账号不匹配，忽略资源包明细');
+      return null;
+    }
+    return d;
+  } catch (e) {
+    if (e.auth) {
+      await clearQoderWebSession(account, ctx);
+      ctx.log?.('Qoder 网页会话已失效，无法显示逐资源包明细（面板里重新登录一次即可）');
+    }
+    return null;
+  }
+}
+
+/** 删除账号上的网页会话 Cookie（失效时），并通知桌面壳可以重新抓取 */
+async function clearQoderWebSession(account, ctx = {}) {
+  const { withAccounts } = await import('./store.js');
+  await withAccounts((list) => {
+    const cur = list.find((a) => a.id === account.id);
+    if (cur?.meta?.qoderWebSession) {
+      const { qoderWebSession, ...meta } = cur.meta;
+      cur.meta = meta;
+      cur.updatedAt = new Date().toISOString();
+      if (account.meta) delete account.meta.qoderWebSession;
+    }
+  });
+  ctx.onWebSessionExpired?.();
 }
 
 const PRODUCTS = {
   qoder: {
     label: 'Qoder',
     checkin: (account) => checkinQoder(account),
-    quota: async (account) => normalizeQoderQuota(await fetchQuotaUsage(account)),
+    quota: async (account, ctx = {}) => normalizeQoderQuota(await fetchQuotaUsage(account), await qoderWebDetail(account, ctx)),
     verify: async (account) => {
       const ui = await fetchUserinfo(account);
       return { name: displayNameFrom(ui), uid: typeof ui?.id === 'string' ? ui.id : null, email: ui?.email || null };

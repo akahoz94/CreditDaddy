@@ -6,10 +6,26 @@
  * 同一 provider 下 uid 相同但 token 不同 → 视为 token 续期，原地更新而不是新增。
  */
 
-import { normalizeAccountInput, findDuplicate, loadAccounts, withAccounts } from './store.js';
+import { normalizeAccountInput, findDuplicate, loadAccounts, withAccounts, loadSettings, saveSettings } from './store.js';
 import { productImpl, displayNameFrom } from './providers.js';
 
 export { displayNameFrom };
+
+/**
+ * 若该 Qoder 账号有 uid 但还没有网页会话（逐资源包明细用），从 settings 的暂存区取货挂上。
+ * 暂存区由桌面版登录窗口写入（会话可能先于账号入库出现）。返回是否有变化。
+ */
+async function attachPendingWebSession(target) {
+  if (!String(target.provider || '').startsWith('qoder') || !target.uid) return false;
+  if (target.meta?.qoderWebSession) return false;
+  const pending = (await loadSettings()).pendingQoderWebSessions || {};
+  const item = pending[target.uid];
+  if (!item || item.kind !== target.provider || !item.cookie) return false;
+  const { [target.uid]: _used, ...rest } = pending;
+  await saveSettings({ pendingQoderWebSessions: rest });
+  target.meta = { ...(target.meta || {}), qoderWebSession: { cookie: item.cookie, capturedAt: item.capturedAt || new Date().toISOString() } };
+  return true;
+}
 
 /**
  * 用新记录刷新已存在账号（保留 id / 名字 / 签到记录）：
@@ -44,15 +60,17 @@ function refreshExisting(existing, incoming) {
   return changed;
 }
 
-/** 在锁内合并一条记录：新增 / 续期 / 重复 */
-function mergeInto(accounts, account) {
+/** 在锁内合并一条记录：新增 / 续期 / 重复；顺带挂上暂存的 Qoder 网页会话 */
+async function mergeInto(accounts, account) {
   const dup = findDuplicate(accounts, account.provider, account.token, account.uid);
   if (!dup) {
+    await attachPendingWebSession(account);
     accounts.push(account);
     return { account, duplicate: false, updated: false };
   }
-  const updated = refreshExisting(dup, account);
-  return { account: dup, duplicate: true, updated };
+  const refreshed = refreshExisting(dup, account);
+  const attached = await attachPendingWebSession(dup);
+  return { account: dup, duplicate: true, updated: refreshed || attached };
 }
 
 /**
@@ -94,11 +112,11 @@ export async function addAccount(input, { verify = true, trusted = false } = {})
  * @returns {Promise<{added, updated, skipped}>}
  */
 export function importAccounts(list) {
-  return withAccounts((accounts) => {
+  return withAccounts(async (accounts) => {
     let added = 0, updated = 0, skipped = 0;
     for (const item of list) {
       try {
-        const r = mergeInto(accounts, normalizeAccountInput(item));
+        const r = await mergeInto(accounts, normalizeAccountInput(item));
         if (!r.duplicate) added++;
         else if (r.updated) updated++;
         else skipped++;

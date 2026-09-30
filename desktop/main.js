@@ -301,9 +301,33 @@ function openIncognitoWindow(url) {
     }
     return { action: 'deny' };
   });
-  authWin.on('closed', () => { ses.clearStorageData().catch(() => {}); });
+  authWin.on('closed', () => {
+    // 清空前抢救 Qoder 网页会话 Cookie（httpOnly，页面脚本拿不到，只有 session API 能读）：
+    // 逐资源包用量明细接口只认这个会话。daemon 端会探测归属 uid 后再绑定到对应账号。
+    harvestQoderWebSession(ses).catch(() => {});
+    ses.clearStorageData().catch(() => {});
+  });
   authWin.loadURL(url);
   return authWin;
+}
+
+/** 读取本次登录窗口隐私会话里的 qoder 网页 Cookie，交给 daemon 按 uid 归户 */
+async function harvestQoderWebSession(ses) {
+  const targets = [
+    { kind: 'qoder-cn', url: 'https://qoder.cn' },
+    { kind: 'qoder', url: 'https://qoder.com' },
+  ];
+  for (const t of targets) {
+    const cookies = await ses.cookies.get({ url: t.url }).catch(() => []);
+    if (!cookies || !cookies.length) continue;
+    const cookie = cookies.map((c) => c.name + '=' + c.value).join('; ');
+    const panelKey = daemonMod && typeof daemonMod.getPanelKey === 'function' ? daemonMod.getPanelKey() : '';
+    await fetch('http://127.0.0.1:' + boundPort + '/api/auth/qoder-web-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(panelKey ? { 'x-qd-key': panelKey } : {}) },
+      body: JSON.stringify({ kind: t.kind, cookie }),
+    }).catch(() => {});
+  }
 }
 
 function registerAuthWindowIpc() {

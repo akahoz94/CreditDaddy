@@ -10,9 +10,9 @@
 
 import {
   OPENAPI_BASE, CN_OPENAPI_BASE,
-  USERINFO_PATH, QUOTA_USAGE_PATH,
+  USERINFO_PATH, QUOTA_USAGE_PATH, WEB_USAGE_PATH,
   CAMPAIGNS_PATH, CAMPAIGN_CLAIM_PATH, JOB_TOKEN_EXCHANGE_PATH,
-  buildQoderHeaders, buildExchangeHeaders, FETCH_TIMEOUT_MS,
+  buildQoderHeaders, buildExchangeHeaders, FETCH_TIMEOUT_MS, webBase,
 } from './constants.js';
 import { getRiskIdentity, clientVersion, machineOs, machineHostname, machineId } from './qoderApp.js';
 import { logger } from './logger.js';
@@ -77,6 +77,44 @@ export async function fetchQuotaUsage(account) {
   });
   if (res.status === 401 || res.status === 403) throw new Error(`鉴权失败 (HTTP ${res.status})，token 可能已过期`);
   if (!res.ok) throw new Error(`quota HTTP ${res.status}`);
+  return res.json();
+}
+
+function webHeaders(cookie, provider) {
+  return {
+    Cookie: cookie,
+    Accept: 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    Referer: webBase(provider) + '/account/usage',
+  };
+}
+
+/** 用原始 Cookie 探测网页会话属于哪个 Qoder 用户（登录窗口抓来的 Cookie 按 uid 归到账号上） */
+export async function probeWebSession(provider, cookie) {
+  const res = await req(`${webBase(provider)}${WEB_USAGE_PATH}`, { headers: webHeaders(cookie, provider) });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return data?.user_id ? data : null;
+}
+
+/**
+ * 网页端逐资源包用量明细（GET {webBase}/api/v2/me/usages/big_model_credits）。
+ *
+ * 与 openapi 的聚合 quota/usage 不同，这个接口只认浏览器登录 qoder.cn / qoder.com 后的
+ * 会话 Cookie（存在 account.meta.qoderWebSession，桌面版登录窗口关闭前自动抓取）。
+ * 返回 null = 该账号没有可用会话（调用方回落聚合数据）；会话失效（401/403）抛错，
+ * 由调用方清除 Cookie 并回落。
+ */
+export async function fetchUsageDetail(account) {
+  const cookie = String(account.meta?.qoderWebSession?.cookie || '').trim();
+  if (!cookie) return null;
+  const res = await req(`${webBase(account.provider)}${WEB_USAGE_PATH}`, { headers: webHeaders(cookie, account.provider) });
+  if (res.status === 401 || res.status === 403) {
+    const err = new Error(`网页会话已失效 (HTTP ${res.status})`);
+    err.auth = true;
+    throw err;
+  }
+  if (!res.ok) throw new Error(`usage detail HTTP ${res.status}`);
   return res.json();
 }
 

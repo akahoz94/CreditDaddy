@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### ✨ 新功能
+
+- Qoder 逐资源包用量明细：网页端「用量明细」接口（`/api/v2/me/usages/big_model_credits`）上线后，桌面版登录窗口关闭前自动抢救 qoder.cn / qoder.com 的会话 Cookie（httpOnly，只有 Electron session API 能读），按响应里的 `user_id` 归到对应账号；额度查询把「附加额度」聚合值展开为每个资源包一条（名称按来源区分 获赠 / 购买 / 组织，各自到期时间进进度条与「N 于 X 到期」提示）。会话失效自动清除并回落聚合数据；无会话（fnOS / 未走过登录窗口）行为不变
+
 ---
 
 ## [1.0.1] (2026-09-30)

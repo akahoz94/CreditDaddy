@@ -345,6 +345,35 @@ test('Qoder 配额归一化为统一积分结构', () => {
   assert.equal(q.parts[0].expiresAt, null, '“永不过期”哨兵值不当作到期时间');
 });
 
+test('Qoder 网页端明细可用时按逐资源包展开（含各自到期时间）', () => {
+  const agg = {
+    userQuota: { total: 0, used: 0, remaining: 0 },
+    addOnQuota: { total: 900, used: 876, remaining: 24 },
+    isQuotaExceeded: false, expiresAt: 253402214400000,
+  };
+  // 真实抓包的 /api/v2/me/usages/big_model_credits 结构（yu_shiyang，2026-09-30）
+  const detail = {
+    user_id: '01a045ad-c952-7079-b3be-9fe2a842e023',
+    plan_quota: { quota_detail: [{ limit_value: 0, used_value: 0, remaining_value: 0, source: 'PLAN', expires_at: 0 }] },
+    resource_package_quota: { quota_detail: [
+      { limit_value: 100, used_value: 76, remaining_value: 24, source: 'RESOURCE_PACKAGE_SOURCE_BONUS', expires_at: 1792635167844 },
+      { limit_value: 500, used_value: 500, remaining_value: 0, source: 'RESOURCE_PACKAGE_SOURCE_BONUS', expires_at: 1790783939000 },
+    ] },
+    dedicated_resource_package_quota: { quota_detail: null },
+  };
+  const q = normalizeQoderQuota(agg, detail);
+  assert.deepEqual({ t: q.total, u: q.used, r: q.remaining, n: q.parts.length }, { t: 600, u: 576, r: 24, n: 2 });
+  assert.equal(q.parts[0].name, '获赠资源包');
+  assert.ok(q.parts[0].expiresAt && q.parts[0].expiresAt.startsWith('2026-10-22'), '每包保留自己的到期时间');
+  assert.equal(q.parts[1].remaining, 0);
+  // 无明细时回落聚合数据（fnOS / 未登录网页的账号）
+  const fallback = normalizeQoderQuota(agg, null);
+  assert.deepEqual({ t: fallback.total, u: fallback.used, r: fallback.remaining, n: fallback.parts.length }, { t: 900, u: 876, r: 24, n: 1 });
+  // 明细里全是 0（新用户）也回落聚合而不是显示空列表
+  const emptyDetail = { plan_quota: { quota_detail: [] }, resource_package_quota: { quota_detail: [] } };
+  assert.equal(normalizeQoderQuota(agg, emptyDetail).parts.length, 1);
+});
+
 test('导入：10router codebuddy-* 映射为 WorkBuddy，兼容更名前的 QoderDaddy 导出', () => {
   const blob = transfer.sealTransfer({ provider: 'codebuddy-cn', accounts: [{ accessToken: 'eyJ.a.b', name: 'cb' }] }, 'pw-10r');
   const r = transfer.parseImport(blob, { password: 'pw-10r' });
