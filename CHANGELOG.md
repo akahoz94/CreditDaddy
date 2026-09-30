@@ -4,6 +4,18 @@
 
 ---
 
+## [1.3.1]
+
+### ✨ 新功能
+
+- **Trae 切换后自动重新拉起客户端**（与 mirasim / 妙手 一致）：桌面壳新增 `open-trae-client`（按 TRAE SOLO CN / Trae CN / TRAE SOLO / Trae 四个安装名找 exe，`shell.openPath`），面板切换成功后延迟 800ms 自动重开，Trae 页也补了「打开客户端」按钮作手动兜底。
+
+### ⚠ 移除
+
+- **删掉 1.3.0 的 Trae 冷切换**（只把 token 用 tc 信封写回 `storage.json`）。真机验证：Trae 判登录还要看 `state.vscdb`，只写这一个键的结果是**客户端显示未登录**，比不切更糟；而且它写的 token 里 uid 与目标账号相同，会让 `alreadyActive` 误判、连程序自己的还原都被拒。连带删除未被使用的 `tcEncrypt` / `coldWriteAuth` 与其测试。免重登这件事要成立，得连 `state.vscdb` 一起写，目前没有依据。
+
+---
+
 ## [1.3.0]
 
 ### ✨ 新功能

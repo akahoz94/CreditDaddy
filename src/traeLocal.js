@@ -31,48 +31,6 @@ const HOE = [246, 204, 26, 232, 232, 70, 129, 109, 223, 146, 169, 242, 23, 241, 
 const sha512 = (b) => crypto.createHash('sha512').update(b).digest();
 const pepper = (a, b) => Buffer.from(a.map((v, i) => v ^ b[i]));
 
-/** tc 信封加密（decrypt 的反向）：冷切换时用它把保存的 token 写回 storage.json */
-export function tcEncrypt(obj) {
-  const random = crypto.randomBytes(32);
-  const p = pepper(WOE, VOE);
-  const k = sha512(Buffer.concat([sha512(random), p]));
-  const body = Buffer.from(JSON.stringify(obj), 'utf8');
-  const plain = Buffer.concat([sha512(body), body]);
-  const c = crypto.createCipheriv('aes-128-cbc', k.subarray(0, 16), k.subarray(16, 32));
-  return Buffer.concat([HEADER, random, c.update(plain), c.final()]).toString('base64');
-}
-
-/**
- * 冷切换：目标账号没有整份快照（它不是在装上切换功能期间导入的），但账号库里存着它的
- * token，就用 tc 信封把 auth 重新写回 storage.json，省掉一次重新登录。
- *
- * 只写 iCubeAuthInfo://icube.cloudide 一个键，不动 state.vscdb —— 所以 Trae 是否认这份
- * 登录态需要实测；调用方在写之前已经把当前登录快照好了，失败可以 restoreSlot 回滚。
- * refreshToken 只在导入时留一份备用，不参与自动续期（见 liveToAccount 的说明）。
- */
-function coldWriteAuth(account) {
-  const dir = traeDataDir();
-  const file = path.join(dir, 'User', 'globalStorage', 'storage.json');
-  const storage = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const now = Date.now();
-  storage[AUTH_KEY] = tcEncrypt({
-    token: account.token,
-    refreshToken: account.meta?.refreshToken || '',
-    expiredAt: account.expiresAt || new Date(now + 14 * 864e5).toISOString(),
-    refreshExpiredAt: new Date(now + 180 * 864e5).toISOString(),
-    tokenReleaseAt: new Date().toISOString(),
-    userId: String(account.uid),
-    host: account.meta?.host || TRAE_CN_HOST,
-    userRegion: { region: account.meta?.region || 'CN', _aiRegion: account.meta?.region || 'CN' },
-    account: { username: account.name || '', avatar_url: account.meta?.avatarUrl || '', userTag: (account.meta?.region || 'CN').toLowerCase() },
-  });
-  const tmp = file + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(storage), { mode: 0o600 });
-  fs.renameSync(tmp, file);
-}
-
-const TRAE_CN_HOST = 'https://api.trae.cn';
-
 /** tc 信封解密（默认 AES 模式，失败回落 AES_PRIVATE 模式）；解不开返回 null 由调用方降级 */
 export function tcDecrypt(b64) {
   if (typeof b64 !== 'string' || !b64) return null;
@@ -217,9 +175,6 @@ export async function liveToAccount() {
       host: auth.host || undefined,
       region: auth.userRegion?.region || undefined,
       avatarUrl: auth.account?.avatar_url || undefined,
-      // 冷切换要往回写完整 auth，所以留一份 refreshToken；刻意不放顶层
-      // ——面板据 hasRefreshToken 显示「自动续期」，而我们不会去刷（刷了会作废 IDE 自己那份）
-      refreshToken: auth.refreshToken || undefined,
       capturedAt: new Date().toISOString(),
     },
   };
@@ -352,10 +307,10 @@ export async function switchTo(account, { force = false } = {}) {
   const cur = live.auth.userId;
   if (account.uid && cur && String(account.uid) === String(cur)) return { switched: false, alreadyActive: true };
 
-  const slot = hasSlot(account.uid);
-  // 既没快照又没存 token 就真没办法（token 是冷切换的唯一材料）
-  if (!slot && !account.token) {
-    throw new Error(`账号「${account.name || account.uid}」既没有登录态快照也没有保存 token，无法切换：请在 Trae 里登录该账号，再回这里点一次「本机导入」`);
+  // 只认整份快照：实测「只把 token 写回 storage.json」的冷切换会让 Trae 显示未登录
+  // （它判登录还要看 state.vscdb），比不切更糟，所以这条路已删除。
+  if (!hasSlot(account.uid)) {
+    throw new Error(`账号「${account.name || account.uid}」还没有登录态快照：请先在 Trae 里登录该账号，再回这里点一次「本机导入」`);
   }
 
   let closedClient = false;
@@ -368,11 +323,9 @@ export async function switchTo(account, { force = false } = {}) {
     closedClient = terminateTrae().closed === true;
   }
 
-  // 换走前先快照当前登录，冷切换同样要留回滚点
   if (cur) saveSlot(cur);
-  if (slot) { restoreSlot(account.uid); return { switched: true, alreadyActive: false, closedClient }; }
-  coldWriteAuth(account);
-  return { switched: true, alreadyActive: false, cold: true, closedClient };
+  restoreSlot(account.uid);
+  return { switched: true, alreadyActive: false, closedClient };
 }
 
 /** 供 daemon 在导入成功后立即建快照（否则新导入的账号没有可恢复的登录态） */

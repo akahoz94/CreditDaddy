@@ -15,7 +15,7 @@ process.env.CREDITDADDY_HOME = path.join(tmp, 'cd');
 process.env.TRAE_HOME = path.join(tmp, 'trae');
 fs.mkdirSync(process.env.CREDITDADDY_HOME, { recursive: true });
 
-const { snapshotLive, switchTo, hasSlot, tcDecrypt, tcEncrypt, _setRunningForTests } = await import('../src/traeLocal.js');
+const { snapshotLive, switchTo, hasSlot, tcDecrypt,  _setRunningForTests } = await import('../src/traeLocal.js');
 
 const WOE = [82,9,106,213,48,54,165,56,191,64,163,158,129,243,215,251,124,227,57,130,155,47,255,135,52,142,67,68,196,222,233,203,84,123,148,50,166,194,35,61,238,76,149,11,66,250,195,78,8,46,161,102,40,217,36,178,118,91,162,73,109,139,209,37];
 const VOE = [31,221,168,51,136,7,199,49,177,18,16,89,39,128,236,95,96,81,127,169,25,181,74,13,45,229,122,159,147,201,156,239,160,224,59,77,174,42,245,176,200,235,187,60,131,83,153,97,23,43,4,126,186,119,214,38,225,105,20,99,85,33,12,125];
@@ -65,7 +65,7 @@ test('Trae 切换：目标账号没有快照时报错并给出可执行指引，
   const before = liveUid();
   await assert.rejects(
     () => switchTo({ uid: '3333333333333333', name: '没快照的账号' }),
-    (e) => /既没有登录态快照也没有保存 token/.test(e.message) && /本机导入/.test(e.message),
+    (e) => /还没有登录态快照/.test(e.message) && /本机导入/.test(e.message),
   );
   assert.equal(liveUid(), before, '失败必须是原子的，不能把本机登录态改坏');
 });
@@ -85,35 +85,15 @@ test('Trae 切换：客户端在跑且未 force 时拒绝（否则 Trae 会把�
   _setRunningForTests(false);
 });
 
-test('Trae 切换：既没快照又没 token 时先报错、绝不先关进程（曾出现白关一次 Trae）', async () => {
+test('Trae 切换：没快照时先报错、绝不先关进程（曾出现白关一次 Trae）', async () => {
   _setRunningForTests(true);
   const before = liveUid();
   await assert.rejects(
     () => switchTo({ uid: '5555555555555555', name: '没快照' }, { force: true }),
-    (e) => /既没有登录态快照也没有保存 token/.test(e.message) && e.traeRunning === undefined,
+    (e) => /还没有登录态快照/.test(e.message) && e.traeRunning === undefined,
   );
   assert.equal(liveUid(), before, '本机登录态不能被改动');
   _setRunningForTests(false);
-});
-
-test('tc 信封加密侧：tcEncrypt 的输出能被 tcDecrypt 原样解回', () => {
-  const auth = { token: 'eyJhbGciOi.abc.def', userId: '7777777777777777', host: 'https://api.trae.cn', account: { username: 'hoz199' } };
-  assert.deepEqual(tcDecrypt(tcEncrypt(auth)), auth);
-  assert.notEqual(tcEncrypt(auth), tcEncrypt(auth), '每次加密用不同 random，密文不该相同');
-});
-
-test('Trae 冷切换：没快照但有 token 时，把 token 加密写回 storage.json', async () => {
-  _setRunningForTests(false);
-  loginAs('8888888888888888', '9000000000000008');
-  snapshotLive();
-  const r = await switchTo({ uid: '4034551761602176', name: 'hoz199', token: 'jwt-hoz199-cold', expiresAt: '2099-12-31T00:00:00.000Z', meta: { host: 'https://api.trae.cn', region: 'CN', refreshToken: 'rt-hoz199' } });
-  assert.equal(r.cold, true, '应走冷切换分支');
-  assert.equal(liveUid(), '4034551761602176');
-  const a = tcDecrypt(JSON.parse(fs.readFileSync(path.join(process.env.TRAE_HOME, 'User', 'globalStorage', 'storage.json'), 'utf8'))['iCubeAuthInfo://icube.cloudide']);
-  assert.equal(a.token, 'jwt-hoz199-cold');
-  assert.equal(a.refreshToken, 'rt-hoz199');
-  assert.equal(a.expiredAt, '2099-12-31T00:00:00.000Z');
-  assert.ok(hasSlot('8888888888888888'), '被换走的当前登录必须已快照，留回滚点');
 });
 
 test('快照跳过 Chromium 缓存目录（本机实测缓存占 91/106 MB）', async () => {

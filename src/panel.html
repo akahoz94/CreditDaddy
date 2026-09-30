@@ -1342,7 +1342,9 @@ function mirasimClientChip(s) {
 function traeClientChip(s) {
   const c = s.traeClient || {};
   if (!c.installed) return ' <span class="dim">客户端：未安装（本机导入需要 Windows / macOS 的 Trae 客户端）</span>';
-  return ' <span class="dim">客户端：' + (c.running ? '运行中' : '未运行') + (c.signedIn ? '' : ' · 未登录') + '</span>';
+  const canOpen = window.creditdaddy && typeof window.creditdaddy.openTraeClient === 'function';
+  return ' <span class="dim">客户端：' + (c.running ? '运行中' : '未运行') + (c.signedIn ? '' : ' · 未登录') + '</span>'
+    + (canOpen ? ' <button class="btn" id="btn-traeopen" style="margin-left:4px" title="打开本机 Trae 客户端">打开客户端</button>' : '');
 }
 
 // 妙手客户端状态芯片 + 「打开客户端」按钮
@@ -1389,6 +1391,14 @@ $('notice').addEventListener('click', async (e) => {
       const r = await window.creditdaddy.openCatpawClient();
       if (r && r.ok) toast('已启动妙手客户端');
       else toast((r && r.error) || '无法打开妙手客户端', false);
+    } catch (err) { toast(String(err && err.message || err), false); }
+    return;
+  }
+  if (e.target.closest('#btn-traeopen')) {
+    try {
+      const r = await window.creditdaddy.openTraeClient();
+      if (r && r.ok) toast('已启动 Trae 客户端');
+      else toast((r && r.error) || '无法打开 Trae 客户端', false);
     } catch (err) { toast(String(err && err.message || err), false); }
     return;
   }
@@ -2044,6 +2054,15 @@ async function onCardClick(e) {
           try {
             const re = await window.creditdaddy.openCatpawClient();
             if (re && re.ok) toast('已重新启动妙手客户端');
+          } catch (e) {}
+        }, 800);
+      }
+      if (a && a.product === 'trae' && r && !r.alreadyActive && window.creditdaddy && typeof window.creditdaddy.openTraeClient === 'function') {
+        setTimeout(async () => {
+          try {
+            const re = await window.creditdaddy.openTraeClient();
+            if (re && re.ok) toast('已重新启动 Trae 客户端');
+            else toast((re && re.error) || '无法打开 Trae 客户端（桌面版才能自动拉起）', false);
           } catch (e) {}
         }, 800);
       }
