@@ -154,7 +154,7 @@ async function main() {
       const records = [
         ...qa.accounts.map((c) => ({
           label: c.source,
-          rec: { provider: c.provider, token: c.token, name: c.user.name || c.user.email, uid: c.user.id, email: c.user.email, refreshToken: c.refreshToken, expiresAt: c.expiresAt, source: 'local-app' },
+          rec: { provider: c.provider, token: c.token, name: c.user.name || c.user.email, uid: c.user.id, email: c.user.email, refreshToken: c.refreshToken, expiresAt: c.expiresAt, source: 'local-app', meta: { qoderAuth: c.authJson, qoderAuthFile: c.file } },
         })),
         ...wb.accounts.map(({ file: _f, fileTime: _t, current, source, ...rec }) => ({
           label: source, rec: { ...rec, source: current ? 'workbuddy-current' : 'workbuddy-history' },

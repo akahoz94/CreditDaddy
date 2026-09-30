@@ -61,7 +61,7 @@ import { fetchClaimPlans, claimPlan, fetchCaptchaConfig, proxyFirst, setProxyFir
 import { exportAccounts, parseImport, TransferError } from './transfer.js';
 import { syncAccountsTo10r } from './tenrouterAccounts.js';
 import { runCheckinTick, getSchedulerInfo, dayKey, enableZcodeAutoClaimForOneHour, refreshZcodeScheduler, pollZcodeNow } from './checkin.js';
-import { detectQoderApps, readQoderAppAccounts, riskIdentityAvailable, riskIdentitySource } from './qoderApp.js';
+import { detectQoderApps, readQoderAppAccounts, riskIdentityAvailable, riskIdentitySource, switchTo as qoderSwitchTo, qoderRunning } from './qoderApp.js';
 import { umidInfo, installUmid } from './qoderUmid.js';
 import * as tenrouter from './tenrouter.js';
 import * as zcodeGateway from './zcodeGateway.js';
@@ -458,6 +458,16 @@ async function handleApi(req, res, url) {
         return json(res, e.catpawRunning ? 409 : 400, { error: e.message, code: e.catpawRunning ? 'CATPAW_RUNNING' : undefined });
       }
     }
+    if (target.provider === 'qoder' || target.provider === 'qoder-cn') {
+      try {
+        // Qoder 的 force 也只用于跳过「已确认」，绝不代退 Qoder：本工具的会话就挂在它上面
+        const r = await qoderSwitchTo(target, { force: true });
+        logger.info('DAEMON', r.alreadyActive ? `Qoder 当前已是 ${target.name || target.id}` : `Qoder 已切换到 ${target.name || target.id}（重新打开 Qoder 生效）`);
+        return json(res, 200, { ok: true, ...r });
+      } catch (e) {
+        return json(res, e.qoderRunning ? 409 : 400, { error: e.message, code: e.qoderRunning ? 'QODER_RUNNING' : undefined });
+      }
+    }
     if (target.provider === 'trae') {
       // 防丢号：先把 Trae 当前登录同步进账号库并建快照，再覆盖成目标账号的登录态
       try {
@@ -573,6 +583,8 @@ async function handleApi(req, res, url) {
       addRecord({
         provider: c.provider, token: c.token, name: c.user.name || c.user.email, uid: c.user.id, email: c.user.email,
         refreshToken: c.refreshToken, expiresAt: c.expiresAt, source: 'local-app',
+        // 存整份解密后的 auth.v1.dat：切换时要原样写回（里面除 token 还有客户端读的其它字段）
+        meta: { qoderAuth: c.authJson, qoderAuthFile: c.file },
       }, { source: c.source });
     }
     // 2) WorkBuddy 客户端：当前会话 + 历史会话

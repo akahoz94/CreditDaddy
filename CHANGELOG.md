@@ -4,6 +4,16 @@
 
 ---
 
+## [1.2.0]
+
+### ✨ 新功能
+
+- **一键切换本机 Trae 登录账号**：Trae 的登录态分散在 15 项文件/目录里（storage.json 的 tc 信封 + state.vscdb 及其 WAL/SHM 边车 + machineid + aha + Preferences + Local State + leveldb + Network cookie + 两个 webview 分区 + Session Storage），按账号存整份快照到 `~/.creditdaddy/trae-slots/<uid>/`，切换即换快照。换走前先自动快照当前登录避免丢号；目标账号无快照时直接报错并给出可执行指引、不做半程写入；客户端在跑时拒绝切换（Trae 会把内存里的旧登录写回文件），force 才代关。快照跳过 Chromium 的 Cache / Code Cache（本机实测占 91/106 MB）。
+- **一键切换本机 Qoder 登录账号**（上游此前对 Qoder 完全没做切换）：把 auth.v1.dat 解密后的整份 JSON 存进账号 meta，切换时用同一 DPAPI 密钥重新加密写回，并留 `.creditdaddy.bak`。加密格式已用本机真实凭据往返自证（419 B → 419 B）。
+- ⚠ Qoder 切换**刻意不代退进程**：Qoder 是编辑器本体，强退会连带掐掉用户正在进行的工作与会话，因此要求先手动退出。面板确认文案里写明这一点。
+
+---
+
 ## [1.1.0]
 
 ### ✨ 新功能
